@@ -34,8 +34,26 @@ export interface RuffleConfig {
   wmode?: "window" | "opaque" | "transparent" | "direct" | "gpu";
 }
 
+/**
+ * Populated by Ruffle once the movie is actually running — it reflects the SWF
+ * header, so it is the only trustworthy source of the real stage size. Null
+ * until then, and there is no event announcing it.
+ */
+export interface RuffleMetadata {
+  width: number;
+  height: number;
+  frameRate: number;
+  numFrames: number;
+  swfVersion: number;
+  backgroundColor: string | null;
+  isActionScript3: boolean;
+  uncompressedLength: number;
+}
+
 /** The API object returned by `<ruffle-player>.ruffle()`. */
 export interface RuffleInstance {
+  readonly metadata: RuffleMetadata | null;
+  readonly readyState: number;
   config: RuffleConfig;
   load(options: RuffleLoadOptions | string): Promise<void>;
   play(): void;

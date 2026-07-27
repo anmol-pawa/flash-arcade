@@ -52,28 +52,35 @@ type Status = "loading" | "ready" | "error";
  * Turn Ruffle's panic screen into one line of plain English. Its own wording is
  * aimed at developers and is styled for its shadow DOM, so we surface our own.
  */
-function classifyPanic(panicText: string): string {
+function classifyPanic(panicText: string, isLocal: boolean): string {
   const text = panicText.toLowerCase();
   if (text.includes("failed to load")) {
-    return "The game file couldn't be fetched from the Internet Archive.";
+    return isLocal
+      ? "The file couldn't be read."
+      : "The game file couldn't be fetched from the Internet Archive.";
   }
   if (text.includes("cannot parse") || text.includes("invalid swf")) {
-    return "This item's file isn't a Flash movie Ruffle can read.";
+    return isLocal
+      ? "That file isn't a Flash movie Ruffle can read."
+      : "This item's file isn't a Flash movie Ruffle can read.";
   }
   return "The emulator hit something in this game it doesn't support yet.";
 }
 
 export interface RufflePlayerProps {
-  /** Same-origin URL of the SWF (see the /api/asset proxy). */
+  /** Same-origin URL of the SWF (the /api/asset proxy, or a local blob URL). */
   swfUrl: string;
-  /** Same-origin directory the movie resolves relative asset loads against. */
-  baseUrl: string;
+  /**
+   * Directory the movie resolves relative asset loads against. Omitted for
+   * local files, which have no sibling assets to fetch.
+   */
+  baseUrl?: string;
   title: string;
   /** Native stage size, used to preserve the game's real aspect ratio. */
   width?: number;
   height?: number;
   /** Shown in the failure card so users can still reach the original. */
-  archiveUrl: string;
+  archiveUrl?: string;
 }
 
 export default function RufflePlayer({
@@ -89,8 +96,10 @@ export default function RufflePlayer({
   const [status, setStatus] = useState<Status>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isPaused, setIsPaused] = useState(false);
-  /** Measured from Ruffle once the movie is parsed — see below. */
-  const [measuredRatio, setMeasuredRatio] = useState<string | null>(null);
+  /** Read from Ruffle's SWF header metadata once the movie runs — see below. */
+  const [stage, setStage] = useState<{ ratio: string; background: string | null } | null>(
+    null
+  );
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -101,6 +110,7 @@ export default function RufflePlayer({
     let cancelled = false;
     let element: RufflePlayerElement | null = null;
     let panicObserver: MutationObserver | null = null;
+    let metadataTimer: number | undefined;
 
     loadRuffleScript()
       .then(() => {
@@ -133,7 +143,9 @@ export default function RufflePlayer({
           logLevel: "error",
         };
 
-        return instance.load({ url: swfUrl, base: baseUrl });
+        return instance.load(
+          baseUrl ? { url: swfUrl, base: baseUrl } : { url: swfUrl }
+        );
       })
       .then(() => {
         if (cancelled || !element) return;
@@ -156,21 +168,40 @@ export default function RufflePlayer({
             // Already torn down.
           }
           instanceRef.current = null;
-          setErrorMessage(classifyPanic(panic.textContent ?? ""));
+          setErrorMessage(classifyPanic(panic.textContent ?? "", !archiveUrl));
           setStatus("error");
           return true;
         };
 
         if (checkPanic()) return;
-
-        // Ruffle parses the true stage size from the SWF header, so its canvas
-        // is authoritative. The Archive's metadata is often wrong (it claims
-        // 133x22 for Bloxorz), which would otherwise squash the stage.
-        const canvas = shadow?.querySelector("canvas");
-        if (canvas && canvas.width > 0 && canvas.height > 0) {
-          setMeasuredRatio(`${canvas.width} / ${canvas.height}`);
-        }
         setStatus("ready");
+
+        // The real stage size comes from Ruffle's `metadata`, which mirrors the
+        // SWF header. Don't measure the <canvas>: its backing buffer is a fixed
+        // 550x400 that Ruffle stretches with CSS, so it reports the same size
+        // for every movie regardless of the actual stage.
+        //
+        // `metadata` is only populated once the movie is running and Ruffle
+        // emits no event for it, so poll briefly rather than guess.
+        // Generous: big movies (one popular title is 36 MB uncompressed) can take
+        // many seconds to start running. Falling past the deadline is harmless —
+        // the Archive hint stays in place — so err on the side of waiting.
+        const deadline = Date.now() + 30_000;
+        const readStage = () => {
+          if (cancelled) return;
+          const md = instanceRef.current?.metadata;
+          if (md && md.width > 0 && md.height > 0) {
+            setStage({
+              ratio: `${md.width} / ${md.height}`,
+              background: md.backgroundColor,
+            });
+            return;
+          }
+          if (Date.now() < deadline) {
+            metadataTimer = window.setTimeout(readStage, 120);
+          }
+        };
+        readStage();
 
         // A game can also panic later — an unimplemented AS3 call mid-level, for
         // instance — so keep watching rather than only checking once.
@@ -193,6 +224,7 @@ export default function RufflePlayer({
     return () => {
       cancelled = true;
       panicObserver?.disconnect();
+      if (metadataTimer !== undefined) window.clearTimeout(metadataTimer);
       const instance = instanceRef.current;
       instanceRef.current = null;
       // Stop the WASM VM so an abandoned game isn't left burning CPU/audio.
@@ -204,7 +236,7 @@ export default function RufflePlayer({
       }
       element?.remove();
     };
-  }, [swfUrl, baseUrl]);
+  }, [swfUrl, baseUrl, archiveUrl]);
 
   const togglePause = useCallback(() => {
     const instance = instanceRef.current;
@@ -222,10 +254,11 @@ export default function RufflePlayer({
     instanceRef.current?.enterFullscreen();
   }, []);
 
-  // Prefer what Ruffle measured; then the Archive's (sanity-checked) hint;
-  // then Flash's most common stage size.
+  // Prefer Ruffle's SWF-header metadata; fall back to the Archive's
+  // sanity-checked hint (which avoids a layout jump on first paint), then to
+  // Flash's most common stage size.
   const aspectRatio =
-    measuredRatio ?? (width && height ? `${width} / ${height}` : "4 / 3");
+    stage?.ratio ?? (width && height ? `${width} / ${height}` : "4 / 3");
 
   if (status === "error") {
     return (
@@ -242,14 +275,16 @@ export default function RufflePlayer({
         {errorMessage ? (
           <p className="mt-3 font-mono text-xs text-zinc-600">{errorMessage}</p>
         ) : null}
-        <a
-          href={archiveUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-5 inline-block rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
-        >
-          View on the Internet Archive →
-        </a>
+        {archiveUrl ? (
+          <a
+            href={archiveUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-block rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+          >
+            View on the Internet Archive →
+          </a>
+        ) : null}
       </div>
     );
   }
@@ -259,8 +294,14 @@ export default function RufflePlayer({
       {/* Cap the stage height so a 4:3 game doesn't fill a tall viewport; the
           width derives from the aspect ratio, keeping the stage centred. */}
       <div
-        className="relative mx-auto w-full overflow-hidden rounded-lg border border-zinc-800 bg-black"
-        style={{ aspectRatio, maxHeight: "72vh", maxWidth: `calc(72vh * (${aspectRatio}))` }}
+        className="relative mx-auto w-full overflow-hidden rounded-lg border border-zinc-800"
+        style={{
+          aspectRatio,
+          maxHeight: "72vh",
+          maxWidth: `calc(72vh * (${aspectRatio}))`,
+          // Match the movie's own stage colour so letterbox bars don't clash.
+          backgroundColor: stage?.background ?? "#000",
+        }}
       >
         <div ref={containerRef} className="absolute inset-0" />
         {status === "loading" ? (

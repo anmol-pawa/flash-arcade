@@ -179,8 +179,9 @@ interface RawFile {
 
 /**
  * The Archive's SWF dimension probe is frequently wrong — it reports 133×22 for
- * Bloxorz, whose real stage is 550×400. Accept a hint only when it could
- * plausibly be a game stage; the player re-measures from Ruffle after load.
+ * Bloxorz, whose real stage is 550×300. Accept a hint only when it could
+ * plausibly be a game stage; it is used purely to avoid a layout jump on first
+ * paint, and the player replaces it with Ruffle's SWF-header metadata on load.
  */
 function plausibleStage(width: number, height: number): boolean {
   if (width < 120 || height < 120) return false;

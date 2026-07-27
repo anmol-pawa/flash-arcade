@@ -52,7 +52,7 @@ archive.org serves item downloads **without `Access-Control-Allow-Origin`**. Ruf
 Both were found by testing against the live emulator rather than by reading docs:
 
 - **`load()` resolves even when the movie fails.** Ruffle reports problems by rendering its own "panic" screen into its shadow DOM, not by rejecting the promise. Detecting failure means watching for `#panic` in the shadow root — the app does this on load *and* keeps a `MutationObserver` attached, so a game that crashes mid-play is caught too. On failure the VM is destroyed and a plain-English card replaces the stage.
-- **The Archive's SWF dimension metadata is unreliable.** It reports `133×22` for Bloxorz, whose real stage is `550×400`. Metadata is accepted only if it's a plausible stage size; the authoritative value is read from Ruffle's own `<canvas>` after load, since Ruffle parses the true dimensions from the SWF header.
+- **Stage size has two unreliable sources and one good one.** The Archive's own dimension probe is often wrong — it reports `133×22` for Bloxorz, whose real stage is `550×300`. Ruffle's `<canvas>` is no better: its backing buffer is a fixed `550×400` stretched with CSS, so it reports the same size for every movie. The only trustworthy source is `player.ruffle().metadata`, which mirrors the SWF header. It is populated only once the movie is actually running and Ruffle fires no event for it, so the player polls briefly, using the (sanity-checked) Archive hint meanwhile to avoid a layout jump.
 
 ## Running locally
 
