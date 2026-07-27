@@ -13,7 +13,7 @@ Flash Player is gone and cannot come back — every browser removed the plugin, 
 Two pieces are needed to make them playable again:
 
 1. **An emulator.** [Ruffle](https://ruffle.rs) is an open-source Flash Player reimplementation written in Rust and compiled to WebAssembly. It parses the original SWF and executes its ActionScript inside the browser sandbox — no plugin, and none of the security model that got Flash killed.
-2. **The games.** The Internet Archive's `softwarelibrary_flash_games` collection holds ~6,500 titles with public search and download APIs.
+2. **The games.** The Internet Archive preserved them. `softwarelibrary_flash_games` holds ~6,400 curated titles; the wider `softwarelibrary_flash` adds animations, toys and experiments for ~19,800 in total. Both are switchable in the UI.
 
 This app is the layer that joins them.
 
@@ -131,6 +131,7 @@ If a game you own isn't in the Archive's collection, **Your files** (`/local`) p
 ## Implementation notes
 
 - **Search input is escaped** against Lucene syntax before hitting the Archive, so a user typing `sonic: the "best"` can't break the query or inject clauses into the collection filter. Matching is scoped to title/description/creator rather than the whole document, which keeps results relevant.
+- **Queries filter on `mediatype:software`.** The Archive stores sub-collection entries ("Software Library: Flash Animations") alongside real items, and their download counts run into the millions — without the filter they monopolise the popular sort and lead to pages with nothing playable on them.
 - **`useSyncExternalStore` for the shelf**, not effect-driven state: `localStorage` *is* an external store, so this gives correct server/client snapshots and avoids cascading renders on hydration. Snapshots are memoised against the raw string to stay referentially stable.
 - **No database.** The shelf is device-local by design, which keeps the app statically deployable.
 - **The player is keyed by game identifier**, so navigating between games remounts cleanly rather than resetting state by hand.

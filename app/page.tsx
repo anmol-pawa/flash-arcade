@@ -3,11 +3,12 @@
 import { useState } from "react";
 import GameGrid from "@/components/GameGrid";
 import SearchBar from "@/components/SearchBar";
-import type { SortKey } from "@/lib/archive";
+import { DEFAULT_COLLECTION, type CollectionKey, type SortKey } from "@/lib/archive";
 
 export default function HomePage() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("popular");
+  const [collection, setCollection] = useState<CollectionKey>(DEFAULT_COLLECTION);
 
   return (
     <div className="space-y-8">
@@ -22,9 +23,15 @@ export default function HomePage() {
         </p>
       </section>
 
-      <SearchBar onSearchChange={setSearch} sort={sort} onSortChange={setSort} />
+      <SearchBar
+        onSearchChange={setSearch}
+        sort={sort}
+        onSortChange={setSort}
+        collection={collection}
+        onCollectionChange={setCollection}
+      />
 
-      <GameGrid search={search} sort={sort} />
+      <GameGrid search={search} sort={sort} collection={collection} />
     </div>
   );
 }

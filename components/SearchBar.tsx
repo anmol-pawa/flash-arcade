@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { SortKey } from "@/lib/archive";
+import { COLLECTIONS, type CollectionKey, type SortKey } from "@/lib/archive";
 
 const SORT_LABELS: Record<SortKey, string> = {
   popular: "Most played",
@@ -13,10 +13,14 @@ export default function SearchBar({
   onSearchChange,
   sort,
   onSortChange,
+  collection,
+  onCollectionChange,
 }: {
   onSearchChange: (value: string) => void;
   sort: SortKey;
   onSortChange: (value: SortKey) => void;
+  collection: CollectionKey;
+  onCollectionChange: (value: CollectionKey) => void;
 }) {
   const [input, setInput] = useState("");
 
@@ -33,7 +37,7 @@ export default function SearchBar({
           type="search"
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Search 6,500+ preserved Flash games…"
+          placeholder={`Search ${COLLECTIONS[collection].approx.toLocaleString()}+ preserved Flash items…`}
           aria-label="Search games"
           className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 py-2.5 pl-10 pr-4 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
         />
@@ -44,6 +48,19 @@ export default function SearchBar({
           ⌕
         </span>
       </div>
+
+      <select
+        value={collection}
+        onChange={(event) => onCollectionChange(event.target.value as CollectionKey)}
+        aria-label="Which collection to search"
+        className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2.5 text-sm text-zinc-300 focus:border-emerald-500/60 focus:outline-none"
+      >
+        {(Object.keys(COLLECTIONS) as CollectionKey[]).map((key) => (
+          <option key={key} value={key}>
+            {COLLECTIONS[key].label}
+          </option>
+        ))}
+      </select>
 
       <select
         value={sort}

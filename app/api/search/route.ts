@@ -1,4 +1,9 @@
-import { searchGames, type SortKey } from "@/lib/archive";
+import {
+  DEFAULT_COLLECTION,
+  isCollectionKey,
+  searchGames,
+  type SortKey,
+} from "@/lib/archive";
 
 const VALID_SORTS: SortKey[] = ["popular", "title", "recent"];
 const MAX_ROWS = 60;
@@ -12,8 +17,13 @@ export async function GET(request: Request) {
   const sortParam = searchParams.get("sort") as SortKey | null;
   const sort = sortParam && VALID_SORTS.includes(sortParam) ? sortParam : "popular";
 
+  const collectionParam = searchParams.get("collection") ?? "";
+  const collection = isCollectionKey(collectionParam)
+    ? collectionParam
+    : DEFAULT_COLLECTION;
+
   try {
-    const result = await searchGames({ search, page, rows, sort });
+    const result = await searchGames({ search, page, rows, sort, collection });
     return Response.json(result, {
       headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
     });

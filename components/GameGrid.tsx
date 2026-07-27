@@ -3,15 +3,21 @@
 import { useEffect, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import GameCard from "@/components/GameCard";
-import type { SearchResult, SortKey } from "@/lib/archive";
+import type { CollectionKey, SearchResult, SortKey } from "@/lib/archive";
 
 async function fetchPage(
   search: string,
   sort: SortKey,
+  collection: CollectionKey,
   page: number,
   signal?: AbortSignal
 ): Promise<SearchResult> {
-  const params = new URLSearchParams({ q: search, sort, page: String(page) });
+  const params = new URLSearchParams({
+    q: search,
+    sort,
+    collection,
+    page: String(page),
+  });
   const res = await fetch(`/api/search?${params.toString()}`, { signal });
   if (!res.ok) {
     throw new Error("Couldn't reach the Internet Archive. Try again in a moment.");
@@ -34,9 +40,11 @@ function SkeletonCard() {
 export default function GameGrid({
   search,
   sort,
+  collection,
 }: {
   search: string;
   sort: SortKey;
+  collection: CollectionKey;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -48,8 +56,9 @@ export default function GameGrid({
     isFetchingNextPage,
     isPending,
   } = useInfiniteQuery({
-    queryKey: ["games", search, sort],
-    queryFn: ({ pageParam, signal }) => fetchPage(search, sort, pageParam, signal),
+    queryKey: ["games", search, sort, collection],
+    queryFn: ({ pageParam, signal }) =>
+      fetchPage(search, sort, collection, pageParam, signal),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.hasMore ? lastPage.page + 1 : undefined,
@@ -109,7 +118,9 @@ export default function GameGrid({
   return (
     <div className="space-y-6">
       <p className="text-sm text-zinc-500">
-        {total.toLocaleString()} game{total === 1 ? "" : "s"}
+        {/* "games" is wrong once animations and toys are in scope. */}
+        {total.toLocaleString()} {collection === "games" ? "game" : "item"}
+        {total === 1 ? "" : "s"}
         {search ? ` matching “${search}”` : " preserved and playable"}
       </p>
 

@@ -8,7 +8,23 @@
  * We never rehost SWFs; every byte is streamed from archive.org.
  */
 
-export const FLASH_GAMES_COLLECTION = "softwarelibrary_flash_games";
+/**
+ * The Archive splits its Flash holdings across two collections. The games one
+ * is a curated subset; the wider one triples the count by adding animations,
+ * toys and experiments — the rest of what the Flash web actually was.
+ */
+export const COLLECTIONS = {
+  games: { id: "softwarelibrary_flash_games", label: "Games", approx: 6_400 },
+  everything: { id: "softwarelibrary_flash", label: "Games + animations", approx: 19_800 },
+} as const;
+
+export type CollectionKey = keyof typeof COLLECTIONS;
+
+export const DEFAULT_COLLECTION: CollectionKey = "games";
+
+export function isCollectionKey(value: string): value is CollectionKey {
+  return Object.prototype.hasOwnProperty.call(COLLECTIONS, value);
+}
 
 const SEARCH_ENDPOINT = "https://archive.org/advancedsearch.php";
 const METADATA_ENDPOINT = "https://archive.org/metadata";
@@ -71,8 +87,12 @@ function escapeLucene(input: string): string {
   return input.replace(/([+\-!(){}[\]^"~*?:\\/]|&&|\|\|)/g, "\\$1").trim();
 }
 
-function buildQuery(search: string): string {
-  const base = `collection:${FLASH_GAMES_COLLECTION}`;
+function buildQuery(search: string, collection: CollectionKey): string {
+  // `mediatype:software` excludes the sub-collection entries the Archive stores
+  // alongside real items ("Software Library: Flash Animations" and friends).
+  // They carry huge download counts, so without this they dominate the popular
+  // sort and lead to items with nothing playable inside.
+  const base = `collection:${COLLECTIONS[collection].id} AND mediatype:software`;
   const term = escapeLucene(search);
   if (!term) return base;
   // Match the term across title/description/creator rather than the whole doc,
@@ -118,12 +138,20 @@ export async function searchGames(options: {
   page?: number;
   rows?: number;
   sort?: SortKey;
+  collection?: CollectionKey;
   signal?: AbortSignal;
 }): Promise<SearchResult> {
-  const { search = "", page = 1, rows = 48, sort = "popular", signal } = options;
+  const {
+    search = "",
+    page = 1,
+    rows = 48,
+    sort = "popular",
+    collection = DEFAULT_COLLECTION,
+    signal,
+  } = options;
 
   const params = new URLSearchParams();
-  params.set("q", buildQuery(search));
+  params.set("q", buildQuery(search, collection));
   for (const field of ["identifier", "title", "description", "year", "creator", "downloads"]) {
     params.append("fl[]", field);
   }
