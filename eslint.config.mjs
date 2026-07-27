@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored Ruffle emulator build — third-party, minified, not ours to lint.
+    "public/ruffle/**",
   ]),
 ]);
 

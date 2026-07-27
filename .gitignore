@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# local agent notes (workspace convention: only README.md is committed)
+CLAUDE.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*
