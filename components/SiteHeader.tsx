@@ -21,6 +21,9 @@ export default function SiteHeader() {
           <Link href="/favorites" className="text-zinc-400 transition hover:text-white">
             My shelf
           </Link>
+          <Link href="/local" className="text-zinc-400 transition hover:text-white">
+            Your files
+          </Link>
           <Link href="/about" className="text-zinc-400 transition hover:text-white">
             About
           </Link>
