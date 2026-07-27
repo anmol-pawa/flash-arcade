@@ -79,6 +79,29 @@ npm install @ruffle-rs/ruffle@latest && cp node_modules/@ruffle-rs/ruffle/*.js n
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` (runs `next typegen` first for route types) |
 
+## Measured compatibility
+
+A harness drives the real pipeline (`/api/game` → proxy → Ruffle) against the
+collection's most-played titles and records what actually happens. Over the top
+26 items:
+
+| Outcome | Count |
+| --- | --- |
+| Played, stage size confirmed from SWF header | 25 |
+| Archive item contains no SWF at all (only screenshots) | 1 |
+
+Of the titles that ran, 13 distinct stage sizes appeared — 640×480, 800×600,
+550×350, 512×480, 320×240 and more — which is exactly why the canvas-measuring
+approach had to go: it reported 550×400 for every one of them.
+
+The sample skews to popular AS1/AS2-era games, so treat it as evidence the
+pipeline is sound rather than as a compatibility rate for all 6,500 items.
+
+Two things the harness taught us that are worth repeating: Ruffle only populates
+`metadata` for a player that is genuinely laid out and running (an off-screen
+probe reports nothing at all), and large movies can take many seconds to reach
+that point — so the sizing poll is deliberately patient.
+
 ## What doesn't work
 
 No emulator covers all of Flash, and this README would be dishonest to imply otherwise:
@@ -87,7 +110,9 @@ No emulator covers all of Flash, and this README would be dishonest to imply oth
 - **Some ActionScript 3 titles.** Ruffle's AS1/AS2 coverage is essentially complete; AS3 is well advanced but still has gaps, so a minority of later games fail or misbehave.
 - **Touch devices.** These games were designed for mouse and keyboard and predate touchscreens.
 
-Failures surface as an explanatory card with a link to the original Archive item, never a blank black rectangle.
+Failures surface as an explanatory card with a link to the original Archive item, never a blank black rectangle. Items that contain no SWF at all get their own message rather than a bare 404.
+
+If a game you own isn't in the Archive's collection, **Your files** (`/local`) plays a `.swf` straight from your machine — nothing is uploaded.
 
 ## Project layout
 
@@ -100,6 +125,7 @@ Failures surface as an explanatory card with a link to the original Archive item
 | `components/RufflePlayer.tsx` | Emulator lifecycle, panic detection, stage sizing, controls |
 | `components/GameStage.tsx` | Client shell owning shelf side effects |
 | `components/GameGrid.tsx` | Infinite-scroll grid via `IntersectionObserver` |
+| `components/LocalSwfPlayer.tsx` | Plays the user's own `.swf` files, fully client-side |
 | `types/ruffle.d.ts` | Hand-written typings — the package ships none |
 
 ## Implementation notes

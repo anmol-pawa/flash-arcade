@@ -8,8 +8,12 @@ export async function generateMetadata(
   props: PageProps<"/play/[identifier]">
 ): Promise<Metadata> {
   const { identifier } = await props.params;
-  const game = await getGame(identifier);
-  if (!game) return { title: "Game not found — Flash Arcade" };
+  const lookup = await getGame(identifier);
+  if (lookup.status === "missing") return { title: "Game not found — Flash Arcade" };
+  if (lookup.status === "no-swf") {
+    return { title: `${lookup.title} — nothing to play — Flash Arcade` };
+  }
+  const { game } = lookup;
   return {
     title: `${game.title} — Flash Arcade`,
     description: game.description?.slice(0, 200) ?? `Play ${game.title} in your browser.`,
@@ -18,10 +22,41 @@ export async function generateMetadata(
 
 export default async function PlayPage(props: PageProps<"/play/[identifier]">) {
   const { identifier } = await props.params;
-  const game = await getGame(identifier);
+  const lookup = await getGame(identifier);
 
-  // Either the identifier is wrong or the item holds no SWF to play.
-  if (!game) notFound();
+  if (lookup.status === "missing") notFound();
+
+  // The item exists but holds no SWF — some entries in the collection are only
+  // screenshots or notes. Say so, rather than pretending the page is missing.
+  if (lookup.status === "no-swf") {
+    return (
+      <div className="mx-auto max-w-md space-y-4 py-16 text-center">
+        <h1 className="text-xl font-semibold text-zinc-100">{lookup.title}</h1>
+        <p className="text-sm leading-relaxed text-zinc-400">
+          This Archive item doesn&apos;t contain a Flash file — it&apos;s preserved as
+          screenshots or notes rather than a playable game.
+        </p>
+        <div className="flex flex-wrap justify-center gap-3 pt-2">
+          <Link
+            href="/"
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+          >
+            Back to the arcade
+          </Link>
+          <a
+            href={detailsUrl(identifier)}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+          >
+            View the item →
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const { game } = lookup;
 
   return (
     <div className="space-y-6">

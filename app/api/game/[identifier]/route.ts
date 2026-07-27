@@ -11,19 +11,25 @@ export async function GET(
 ) {
   const { identifier } = await ctx.params;
 
-  let game;
+  let lookup;
   try {
-    game = await getGame(identifier);
+    lookup = await getGame(identifier);
   } catch {
     return Response.json({ error: "Archive lookup failed" }, { status: 502 });
   }
 
-  if (!game) {
+  if (lookup.status === "missing") {
+    return Response.json({ error: "No such Archive item" }, { status: 404 });
+  }
+
+  if (lookup.status === "no-swf") {
     return Response.json(
-      { error: "No playable SWF found for this item" },
+      { error: "This Archive item contains no playable SWF", title: lookup.title },
       { status: 404 }
     );
   }
+
+  const { game } = lookup;
 
   return Response.json(
     {

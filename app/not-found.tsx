@@ -5,8 +5,7 @@ export default function NotFound() {
     <div className="mx-auto max-w-md space-y-4 py-20 text-center">
       <h1 className="text-2xl font-semibold text-zinc-100">Nothing here</h1>
       <p className="text-sm leading-relaxed text-zinc-400">
-        That page doesn&apos;t exist — or the Archive item you asked for has no playable
-        SWF inside it.
+        That page doesn&apos;t exist, and neither does the Archive item behind it.
       </p>
       <Link
         href="/"

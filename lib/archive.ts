@@ -202,17 +202,27 @@ function pickSwf(files: RawFile[]): RawFile | undefined {
   );
 }
 
+/**
+ * Outcome of resolving an item. "no-swf" is distinct from "missing" because it
+ * genuinely happens — some items in the games collection hold only screenshots
+ * or notes — and it deserves a better explanation than a bare 404.
+ */
+export type GameLookup =
+  | { status: "ok"; game: GameDetail }
+  | { status: "no-swf"; title: string }
+  | { status: "missing" };
+
 export async function getGame(
   identifier: string,
   signal?: AbortSignal
-): Promise<GameDetail | null> {
+): Promise<GameLookup> {
   const res = await fetch(`${METADATA_ENDPOINT}/${encodeURIComponent(identifier)}`, {
     signal,
     headers: { Accept: "application/json" },
     next: { revalidate: 3600 },
   });
 
-  if (!res.ok) return null;
+  if (!res.ok) return { status: "missing" };
 
   const json = (await res.json()) as {
     metadata?: RawDoc & { addeddate?: unknown };
@@ -220,15 +230,18 @@ export async function getGame(
     // Archive returns `{}` for unknown identifiers.
   };
 
-  if (!json.metadata) return null;
+  if (!json.metadata) return { status: "missing" };
 
-  const swf = pickSwf(json.files ?? []);
-  if (!swf?.name) return null;
-
-  const dir = `${DOWNLOAD_ENDPOINT}/${encodeURIComponent(identifier)}`;
   const summary = normalizeDoc({ ...json.metadata, identifier });
 
-  return {
+  const swf = pickSwf(json.files ?? []);
+  if (!swf?.name) {
+    return { status: "no-swf", title: summary?.title ?? identifier };
+  }
+
+  const dir = `${DOWNLOAD_ENDPOINT}/${encodeURIComponent(identifier)}`;
+
+  const game: GameDetail = {
     identifier,
     title: summary?.title ?? identifier,
     description: summary?.description,
@@ -241,6 +254,8 @@ export async function getGame(
     baseUrl: `${dir}/`,
     ...stageHint(toNumber(swf.width), toNumber(swf.height)),
   };
+
+  return { status: "ok", game };
 }
 
 function stageHint(width: number, height: number): { width?: number; height?: number } {
