@@ -87,17 +87,89 @@ function escapeLucene(input: string): string {
   return input.replace(/([+\-!(){}[\]^"~*?:\\/]|&&|\|\|)/g, "\\$1").trim();
 }
 
-function buildQuery(search: string, collection: CollectionKey): string {
+/**
+ * Genres are a curated keyword list, not a taxonomy the Archive provides. Its
+ * `subject` field is free-text and mostly noise ("Flash", "flash game", plot
+ * summaries), so these are the tags that actually recur often enough to be
+ * useful as filters. Counts alongside are the approximate hits in the wider
+ * collection at the time of writing.
+ */
+export const GENRES = {
+  puzzle: { label: "Puzzle", term: "puzzle" },
+  action: { label: "Action", term: "action" },
+  arcade: { label: "Arcade", term: "arcade" },
+  adventure: { label: "Adventure", term: "adventure" },
+  platformer: { label: "Platformer", term: "platformer" },
+  shooter: { label: "Shooter", term: "shooter" },
+  rpg: { label: "RPG", term: "rpg" },
+  strategy: { label: "Strategy", term: "strategy" },
+  sports: { label: "Sports", term: "sports" },
+  racing: { label: "Racing", term: "racing" },
+  tower: { label: "Tower defense", term: "tower defense" },
+  dressup: { label: "Dress-up", term: "dressup" },
+} as const;
+
+export type GenreKey = keyof typeof GENRES;
+
+export function isGenreKey(value: string): value is GenreKey {
+  return Object.prototype.hasOwnProperty.call(GENRES, value);
+}
+
+/**
+ * Decades the Archive has meaningful coverage for. Roughly half of all items
+ * carry a usable `year`, so decade browsing is a curated view rather than a
+ * complete partition of the library.
+ */
+export const DECADES = {
+  "1990s": { label: "1990s", from: 1995, to: 1999 },
+  "2000s": { label: "2000s", from: 2000, to: 2009 },
+  "2010s": { label: "2010s", from: 2010, to: 2019 },
+  "2020s": { label: "2020s", from: 2020, to: 2029 },
+} as const;
+
+export type DecadeKey = keyof typeof DECADES;
+
+export function isDecadeKey(value: string): value is DecadeKey {
+  return Object.prototype.hasOwnProperty.call(DECADES, value);
+}
+
+export interface QueryFilters {
+  search?: string;
+  collection?: CollectionKey;
+  genre?: GenreKey;
+  decade?: DecadeKey;
+}
+
+function buildQuery({
+  search = "",
+  collection = DEFAULT_COLLECTION,
+  genre,
+  decade,
+}: QueryFilters): string {
   // `mediatype:software` excludes the sub-collection entries the Archive stores
   // alongside real items ("Software Library: Flash Animations" and friends).
   // They carry huge download counts, so without this they dominate the popular
   // sort and lead to items with nothing playable inside.
-  const base = `collection:${COLLECTIONS[collection].id} AND mediatype:software`;
+  const clauses = [`collection:${COLLECTIONS[collection].id}`, "mediatype:software"];
+
   const term = escapeLucene(search);
-  if (!term) return base;
-  // Match the term across title/description/creator rather than the whole doc,
-  // which keeps results relevant instead of matching boilerplate metadata.
-  return `${base} AND (title:(${term}) OR description:(${term}) OR creator:(${term}))`;
+  if (term) {
+    // Search title/description/creator rather than the whole document, which
+    // keeps results relevant instead of matching boilerplate metadata. Title is
+    // boosted so a name match outranks an incidental mention in a description.
+    clauses.push(
+      `(title:(${term})^4 OR creator:(${term})^2 OR description:(${term}))`
+    );
+  }
+
+  if (genre) clauses.push(`subject:(${escapeLucene(GENRES[genre].term)})`);
+
+  if (decade) {
+    const { from, to } = DECADES[decade];
+    clauses.push(`year:[${from} TO ${to}]`);
+  }
+
+  return clauses.join(" AND ");
 }
 
 /** Archive returns numeric fields inconsistently (number | string | array). */
@@ -139,6 +211,8 @@ export async function searchGames(options: {
   rows?: number;
   sort?: SortKey;
   collection?: CollectionKey;
+  genre?: GenreKey;
+  decade?: DecadeKey;
   signal?: AbortSignal;
 }): Promise<SearchResult> {
   const {
@@ -147,11 +221,13 @@ export async function searchGames(options: {
     rows = 48,
     sort = "popular",
     collection = DEFAULT_COLLECTION,
+    genre,
+    decade,
     signal,
   } = options;
 
   const params = new URLSearchParams();
-  params.set("q", buildQuery(search, collection));
+  params.set("q", buildQuery({ search, collection, genre, decade }));
   for (const field of ["identifier", "title", "description", "year", "creator", "downloads"]) {
     params.append("fl[]", field);
   }

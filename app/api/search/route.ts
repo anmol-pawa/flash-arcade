@@ -1,6 +1,8 @@
 import {
   DEFAULT_COLLECTION,
   isCollectionKey,
+  isDecadeKey,
+  isGenreKey,
   searchGames,
   type SortKey,
 } from "@/lib/archive";
@@ -17,13 +19,28 @@ export async function GET(request: Request) {
   const sortParam = searchParams.get("sort") as SortKey | null;
   const sort = sortParam && VALID_SORTS.includes(sortParam) ? sortParam : "popular";
 
+  // Unknown filter values are dropped rather than interpolated into the query.
   const collectionParam = searchParams.get("collection") ?? "";
   const collection = isCollectionKey(collectionParam)
     ? collectionParam
     : DEFAULT_COLLECTION;
 
+  const genreParam = searchParams.get("genre") ?? "";
+  const genre = isGenreKey(genreParam) ? genreParam : undefined;
+
+  const decadeParam = searchParams.get("decade") ?? "";
+  const decade = isDecadeKey(decadeParam) ? decadeParam : undefined;
+
   try {
-    const result = await searchGames({ search, page, rows, sort, collection });
+    const result = await searchGames({
+      search,
+      page,
+      rows,
+      sort,
+      collection,
+      genre,
+      decade,
+    });
     return Response.json(result, {
       headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
     });

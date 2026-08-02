@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useCallback, useState } from "react";
 import GameGrid from "@/components/GameGrid";
-import SearchBar from "@/components/SearchBar";
-import { DEFAULT_COLLECTION, type CollectionKey, type SortKey } from "@/lib/archive";
+import FilterBar, { type Filters } from "@/components/FilterBar";
+import { DECADES, DEFAULT_COLLECTION, type DecadeKey } from "@/lib/archive";
 
 export default function HomePage() {
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortKey>("popular");
-  const [collection, setCollection] = useState<CollectionKey>(DEFAULT_COLLECTION);
+  const [filters, setFilters] = useState<Filters>({
+    search: "",
+    sort: "popular",
+    collection: DEFAULT_COLLECTION,
+  });
+
+  const handleChange = useCallback((next: Filters) => setFilters(next), []);
 
   return (
     <div className="space-y-8">
@@ -21,17 +26,30 @@ export default function HomePage() {
           anyway — preserved by the Internet Archive and playable here through Ruffle,
           an open-source emulator that runs in your browser. No plugin required.
         </p>
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-500">
+          <span>Not sure where to start?</span>
+          <Link
+            href="/decades"
+            className="text-emerald-400 underline underline-offset-4 hover:text-emerald-300"
+          >
+            Browse the top 30 of each decade
+          </Link>
+          <span aria-hidden>·</span>
+          {(Object.keys(DECADES) as DecadeKey[]).map((key) => (
+            <Link
+              key={key}
+              href={`/decades#${key}`}
+              className="text-zinc-400 underline underline-offset-4 hover:text-zinc-200"
+            >
+              {DECADES[key].label}
+            </Link>
+          ))}
+        </p>
       </section>
 
-      <SearchBar
-        onSearchChange={setSearch}
-        sort={sort}
-        onSortChange={setSort}
-        collection={collection}
-        onCollectionChange={setCollection}
-      />
+      <FilterBar filters={filters} onChange={handleChange} />
 
-      <GameGrid search={search} sort={sort} collection={collection} />
+      <GameGrid filters={filters} />
     </div>
   );
 }

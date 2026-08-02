@@ -18,6 +18,9 @@ export default function SiteHeader() {
           <Link href="/" className="text-zinc-400 transition hover:text-white">
             Browse
           </Link>
+          <Link href="/decades" className="text-zinc-400 transition hover:text-white">
+            By decade
+          </Link>
           <Link href="/favorites" className="text-zinc-400 transition hover:text-white">
             My shelf
           </Link>
