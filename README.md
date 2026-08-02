@@ -33,6 +33,7 @@ This app is the layer that joins them.
 │  Next.js route handlers                                     │
 │                                                             │
 │   GET /api/search                  → archive.org search     │
+│   GET /api/game/[id]               → resolved SWF + URLs    │
 │   GET /api/asset/[id]/[...path]    → streams item files     │
 └──────┬──────────────────────────────────────────────────────┘
        │
@@ -78,6 +79,15 @@ npm install @ruffle-rs/ruffle@latest && cp node_modules/@ruffle-rs/ruffle/*.js n
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` (runs `next typegen` first for route types) |
+
+## Browsing the library
+
+- **Search by name** across title, creator and description. Title matches are boosted 4× and creator 2×, so searching a game's name ranks the game itself above anything that merely mentions it.
+- **Genre chips** — twelve curated keywords over the Archive's `subject` field. That field is free text and mostly noise (`Flash`, `flash game`, plot summaries), so this is a hand-picked set of tags that recur often enough to filter usefully, not a taxonomy the Archive publishes.
+- **Era chips** — year ranges from the 1990s to the 2020s. Roughly half the library carries a usable `year`, so era browsing is a curated view rather than a complete partition, and the UI says so.
+- **[Top 30 by decade](/decades)** — the most-played items of each era, prerendered, each decade in its own Suspense boundary so one slow Archive call can't stall the page.
+
+Filters compose: *puzzle · 2000s · "bobble"* is a single query.
 
 ## Measured compatibility
 
@@ -125,6 +135,8 @@ If a game you own isn't in the Archive's collection, **Your files** (`/local`) p
 | `components/RufflePlayer.tsx` | Emulator lifecycle, panic detection, stage sizing, controls |
 | `components/GameStage.tsx` | Client shell owning shelf side effects |
 | `components/GameGrid.tsx` | Infinite-scroll grid via `IntersectionObserver` |
+| `components/FilterBar.tsx` | Search, collection, sort, genre and era in one filter set |
+| `app/decades/page.tsx` | Prerendered Top 30 per decade |
 | `components/LocalSwfPlayer.tsx` | Plays the user's own `.swf` files, fully client-side |
 | `types/ruffle.d.ts` | Hand-written typings — the package ships none |
 
