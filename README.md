@@ -48,6 +48,27 @@ archive.org serves item downloads **without `Access-Control-Allow-Origin`**. Ruf
 
 `/api/asset/[identifier]/[...path]` is a catch-all proxy that makes the SWF *and* everything the game loads at runtime (XML level data, MP3 audio, sub-SWFs) same-origin. Ruffle's `base` is pointed at the proxy directory so relative asset loads inside the movie resolve correctly. The route validates the identifier against `^[A-Za-z0-9._-]+$`, rejects path traversal, forwards `Range` headers for seekable media, and caches immutably (Archive items never change once uploaded).
 
+### Saves and keyboard
+
+Flash games stored progress in SharedObjects ("Flash cookies"). Ruffle implements
+that over `localStorage`, keyed as `{hostname}/{swf directory}/{save name}` — and
+because the proxy gives every game a stable path, **saves survive a reload on
+their own**. The player detects saves belonging to the loaded movie and offers to
+clear just those; `lib/ruffleSaves.ts` mirrors Ruffle's own key matching so one
+game's save is never mistaken for another's.
+
+Ruffle also leaves its player at `tabIndex -1`, so keyboard input goes to the
+document and games feel dead until clicked. The player puts it in the tab order
+and focuses it once the movie is genuinely running — focusing when `load()`
+resolves is too early, as Ruffle has not yet wired up its shadow root's focus
+delegation and the call silently does nothing.
+
+The status line reports both facts, and reconciles them against
+`document.activeElement` and storage every second rather than trusting events:
+focus events are suppressed entirely while the document itself is unfocused, and
+games write saves whenever they like. It should never claim the keyboard is
+connected when it isn't.
+
 ### Two Ruffle behaviours worth knowing
 
 Both were found by testing against the live emulator rather than by reading docs:

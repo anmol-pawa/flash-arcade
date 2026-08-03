@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RufflePlayerElement, RuffleInstance } from "@/types/ruffle";
+import { clearSaves, saveSize } from "@/lib/ruffleSaves";
 
 const RUFFLE_SCRIPT = "/ruffle/ruffle.js";
 
@@ -100,6 +101,9 @@ export default function RufflePlayer({
   const [stage, setStage] = useState<{ ratio: string; background: string | null } | null>(
     null
   );
+  const [saveBytes, setSaveBytes] = useState(0);
+  /** Tracked from real focus events — never assumed. */
+  const [hasFocus, setHasFocus] = useState(false);
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -111,6 +115,19 @@ export default function RufflePlayer({
     let element: RufflePlayerElement | null = null;
     let panicObserver: MutationObserver | null = null;
     let metadataTimer: number | undefined;
+
+    // Ruffle's shadow root uses delegatesFocus, so focusing the host forwards
+    // focus to an inner element. `focus`/`blur` don't bubble and never reach a
+    // listener on the host, so watch the document's bubbling focusin/focusout
+    // and just ask who the active element actually is.
+    // Checked on the next tick, not inline: during `focusout` the browser has
+    // not yet moved activeElement, so reading it there reports the element that
+    // is *losing* focus and the flag would never go false.
+    const syncFocus = () => {
+      window.setTimeout(() => {
+        if (!cancelled) setHasFocus(document.activeElement === element);
+      }, 0);
+    };
 
     loadRuffleScript()
       .then(() => {
@@ -176,6 +193,15 @@ export default function RufflePlayer({
         if (checkPanic()) return;
         setStatus("ready");
 
+        // Ruffle leaves the player at tabIndex -1, so keyboard events go to the
+        // document and games appear unresponsive until clicked. Put it in the
+        // tab order so it is reachable by keyboard as well as by mouse.
+        if (element) {
+          element.tabIndex = 0;
+          document.addEventListener("focusin", syncFocus);
+          document.addEventListener("focusout", syncFocus);
+        }
+
         // The real stage size comes from Ruffle's `metadata`, which mirrors the
         // SWF header. Don't measure the <canvas>: its backing buffer is a fixed
         // 550x400 that Ruffle stretches with CSS, so it reports the same size
@@ -195,6 +221,16 @@ export default function RufflePlayer({
               ratio: `${md.width} / ${md.height}`,
               background: md.backgroundColor,
             });
+            // Focus only now. Calling it when `load()` resolved was too early:
+            // Ruffle had not yet wired the shadow DOM's focus delegation, so
+            // the call silently did nothing. `preventScroll` stops the page
+            // jumping to the stage.
+            try {
+              element?.focus({ preventScroll: true });
+            } catch {
+              element?.focus();
+            }
+            syncFocus();
             return;
           }
           if (Date.now() < deadline) {
@@ -225,6 +261,8 @@ export default function RufflePlayer({
       cancelled = true;
       panicObserver?.disconnect();
       if (metadataTimer !== undefined) window.clearTimeout(metadataTimer);
+      document.removeEventListener("focusin", syncFocus);
+      document.removeEventListener("focusout", syncFocus);
       const instance = instanceRef.current;
       instanceRef.current = null;
       // Stop the WASM VM so an abandoned game isn't left burning CPU/audio.
@@ -237,6 +275,37 @@ export default function RufflePlayer({
       element?.remove();
     };
   }, [swfUrl, baseUrl, archiveUrl]);
+
+  // Two things the status line reports that have no event to subscribe to:
+  //
+  //  - Games write SharedObject saves through Ruffle whenever they like.
+  //  - Focus events are suppressed entirely while the document itself is
+  //    unfocused (background tab, or an unfocused window), so the focusin /
+  //    focusout listeners alone can leave the indicator stale.
+  //
+  // Both claims are shown to the player, so reconcile them against reality on a
+  // slow interval rather than trusting the last event to have arrived.
+  useEffect(() => {
+    if (status !== "ready") return;
+
+    const container = containerRef.current;
+    const reconcile = () => {
+      const player = container?.firstElementChild ?? null;
+      setHasFocus(player !== null && document.activeElement === player);
+      // Local files get a throwaway blob URL, so their saves can't be looked up
+      // stably and there is nothing meaningful to report.
+      if (swfUrl.startsWith("/")) setSaveBytes(saveSize(swfUrl));
+    };
+
+    reconcile();
+    const timer = window.setInterval(reconcile, 1_000);
+    return () => window.clearInterval(timer);
+  }, [swfUrl, status]);
+
+  const handleClearSaves = useCallback(() => {
+    const removed = clearSaves(swfUrl);
+    if (removed > 0) setSaveBytes(0);
+  }, [swfUrl]);
 
   const togglePause = useCallback(() => {
     const instance = instanceRef.current;
@@ -332,8 +401,28 @@ export default function RufflePlayer({
         >
           Fullscreen
         </button>
+
+        {saveBytes > 0 ? (
+          <button
+            type="button"
+            onClick={handleClearSaves}
+            title="Delete this game's saved progress"
+            className="rounded-md border border-zinc-800 px-3 py-1.5 text-sm text-zinc-400 transition hover:border-red-500/60 hover:text-red-300"
+          >
+            Clear save
+          </button>
+        ) : null}
+
         <p className="ml-auto text-xs text-zinc-600">
-          Click the game first so it receives your keyboard input.
+          {/* Driven by real focus events, so this never claims the keyboard is
+              connected when it isn't. */}
+          {status !== "ready"
+            ? null
+            : hasFocus
+              ? saveBytes > 0
+                ? "Keyboard ready · progress saved on this device"
+                : "Keyboard ready"
+              : "Click the game to use your keyboard"}
         </p>
       </div>
     </div>
