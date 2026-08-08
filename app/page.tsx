@@ -1,20 +1,25 @@
-"use client";
-
 import Link from "next/link";
-import { useCallback, useState } from "react";
-import GameGrid from "@/components/GameGrid";
-import FilterBar, { type Filters } from "@/components/FilterBar";
-import { DECADES, DEFAULT_COLLECTION, type DecadeKey } from "@/lib/archive";
+import { Suspense } from "react";
+import ArcadeBrowser from "@/components/ArcadeBrowser";
+import { DECADES, type DecadeKey } from "@/lib/archive";
+
+function BrowserFallback() {
+  return (
+    <div className="space-y-6">
+      <div className="h-11 animate-pulse rounded-lg bg-zinc-900/80" />
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div
+            key={i}
+            className="aspect-[4/3] animate-pulse rounded-lg border border-zinc-800 bg-zinc-900/60"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function HomePage() {
-  const [filters, setFilters] = useState<Filters>({
-    search: "",
-    sort: "popular",
-    collection: DEFAULT_COLLECTION,
-  });
-
-  const handleChange = useCallback((next: Filters) => setFilters(next), []);
-
   return (
     <div className="space-y-8">
       <section className="space-y-3">
@@ -47,9 +52,11 @@ export default function HomePage() {
         </p>
       </section>
 
-      <FilterBar filters={filters} onChange={handleChange} />
-
-      <GameGrid filters={filters} />
+      {/* useSearchParams opts its subtree into client rendering, so the hero
+          above still ships as prerendered HTML. */}
+      <Suspense fallback={<BrowserFallback />}>
+        <ArcadeBrowser />
+      </Suspense>
     </div>
   );
 }

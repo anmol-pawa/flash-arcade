@@ -61,6 +61,15 @@ export default function FilterBar({
   onChange: (next: Filters) => void;
 }) {
   const [input, setInput] = useState(filters.search);
+  const [syncedSearch, setSyncedSearch] = useState(filters.search);
+
+  // Filters live in the URL, so `filters.search` can change without the user
+  // typing — browser back, or a shared link. Adopt it during render (React's
+  // pattern for state derived from props) so the box never shows stale text.
+  if (filters.search !== syncedSearch) {
+    setSyncedSearch(filters.search);
+    setInput(filters.search);
+  }
 
   // Debounce typing so the Archive isn't hit on every keystroke.
   useEffect(() => {

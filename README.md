@@ -110,6 +110,8 @@ npm install @ruffle-rs/ruffle@latest && cp node_modules/@ruffle-rs/ruffle/*.js n
 
 Filters compose: *puzzle · 2000s · "bobble"* is a single query.
 
+**Filters live in the URL**, not component state — `/?q=bobble&genre=puzzle&era=2000s`. So a filtered shelf can be shared or bookmarked, and opening a game then pressing back returns to the same shelf instead of a reset grid. Only non-default values are written, keeping links readable. Changes use `replace` rather than `push`, since a debounced search box would otherwise stack one history entry per keystroke and bury the page you came from.
+
 ## Measured compatibility
 
 A harness drives the real pipeline (`/api/game` → proxy → Ruffle) against the
