@@ -1,8 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
-import { detailsUrl, getGame } from "@/lib/archive";
+import { detailsUrl, getGame, getRelatedGames, type GameDetail } from "@/lib/archive";
 import GameStage from "@/components/GameStage";
+import RelatedGames from "@/components/RelatedGames";
+
+async function Related({ game }: { game: GameDetail }) {
+  const { games, matchedBy, term } = await getRelatedGames(game);
+  // Label what actually matched. A game can list a creator and still fall back
+  // to the title search when that creator has nothing else preserved here.
+  const reason =
+    matchedBy === "creator" ? `Also by ${term}` : `Matched on “${term}”`;
+  return <RelatedGames games={games} reason={reason} />;
+}
 
 export async function generateMetadata(
   props: PageProps<"/play/[identifier]">
@@ -127,6 +138,12 @@ export default async function PlayPage(props: PageProps<"/play/[identifier]">) {
           </a>
         </aside>
       </div>
+
+      {/* Streams in separately: a second Archive round-trip must never hold up
+          the thing the page exists for, which is the game itself. */}
+      <Suspense fallback={null}>
+        <Related game={game} />
+      </Suspense>
     </div>
   );
 }

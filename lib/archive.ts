@@ -362,6 +362,78 @@ export async function getGame(
   return { status: "ok", game };
 }
 
+/** Words too generic to make a useful "more like this" query. */
+const STOPWORDS = new Set([
+  "the","a","an","of","and","or","in","on","at","to","for","with","game","games",
+  "flash","swf","play","online","free","version","full","new","classic","offline",
+  "final","complete","edition","remake","demo","part","vol","volume",
+]);
+
+/**
+ * A short, distinctive phrase from a title — "Super Mario Crossover Offline"
+ * becomes "Super Mario", which is what actually finds siblings.
+ */
+function titleQuery(title: string): string {
+  const words = title
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w.toLowerCase()));
+  return words.slice(0, 2).join(" ");
+}
+
+/**
+ * Which strategy actually produced the suggestions. Returned rather than
+ * inferred by the caller: a game can have a creator and still fall through to
+ * the title match when that creator has nothing else in the collection, and
+ * labelling those results "also by …" would be a plain lie.
+ */
+export interface RelatedGames {
+  games: GameSummary[];
+  matchedBy: "creator" | "title" | "none";
+  term: string;
+}
+
+/**
+ * Games to offer once this one is finished. Prefers the same creator, since
+ * Flash studios had recognisable house styles, and falls back to a distinctive
+ * slice of the title so sequels and clones surface.
+ */
+export async function getRelatedGames(
+  game: GameDetail,
+  limit = 10,
+  signal?: AbortSignal
+): Promise<RelatedGames> {
+  const attempts: { term: string; matchedBy: "creator" | "title" }[] = [];
+  if (game.creator?.trim()) {
+    attempts.push({ term: game.creator.trim(), matchedBy: "creator" });
+  }
+  const fromTitle = titleQuery(game.title);
+  if (fromTitle) attempts.push({ term: fromTitle, matchedBy: "title" });
+
+  for (const { term, matchedBy } of attempts) {
+    let result;
+    try {
+      result = await searchGames({
+        search: term,
+        collection: "everything",
+        sort: "popular",
+        // Over-fetch: the game itself is almost always its own top match.
+        rows: limit + 4,
+        signal,
+      });
+    } catch {
+      return { games: [], matchedBy: "none", term: "" };
+    }
+
+    const related = result.games.filter((g) => g.identifier !== game.identifier);
+    if (related.length > 0) {
+      return { games: related.slice(0, limit), matchedBy, term };
+    }
+  }
+
+  return { games: [], matchedBy: "none", term: "" };
+}
+
 function stageHint(width: number, height: number): { width?: number; height?: number } {
   return plausibleStage(width, height) ? { width, height } : {};
 }
