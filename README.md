@@ -69,6 +69,17 @@ focus events are suppressed entirely while the document itself is unfocused, and
 games write saves whenever they like. It should never claim the keyboard is
 connected when it isn't.
 
+### Volume, and the shortcuts that aren't there
+
+Volume is a slider plus a mute toggle, remembered across games and tabs.
+Unmuting restores the level you picked rather than jumping back to full.
+
+There are deliberately **no single-key shortcuts** (P to pause, M to mute, F for
+fullscreen). The player holds keyboard focus so games actually receive input —
+which means any letter key bound here would be stolen from the game. Plenty of
+Flash titles use P, M and F for their own controls, so the shortcut would break
+the thing the page exists to do. The on-screen controls are the trade.
+
 ### Two Ruffle behaviours worth knowing
 
 Both were found by testing against the live emulator rather than by reading docs:

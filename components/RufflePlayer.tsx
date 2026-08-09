@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RufflePlayerElement, RuffleInstance } from "@/types/ruffle";
 import { clearSaves, saveSize } from "@/lib/ruffleSaves";
+import { useVolume } from "@/lib/useVolume";
 
 const RUFFLE_SCRIPT = "/ruffle/ruffle.js";
 
@@ -104,6 +105,7 @@ export default function RufflePlayer({
   const [saveBytes, setSaveBytes] = useState(0);
   /** Tracked from real focus events — never assumed. */
   const [hasFocus, setHasFocus] = useState(false);
+  const [volume, setVolume] = useVolume();
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -302,6 +304,31 @@ export default function RufflePlayer({
     return () => window.clearInterval(timer);
   }, [swfUrl, status]);
 
+  // Apply the remembered level to whichever movie is currently loaded.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const instance = instanceRef.current;
+    if (!instance) return;
+    try {
+      instance.volume = volume;
+    } catch {
+      // Player torn down between render and effect; nothing to do.
+    }
+  }, [volume, status]);
+
+  // Remembered so unmuting returns to the level the player chose rather than
+  // slamming back to full.
+  const preMuteVolume = useRef(1);
+
+  const toggleMute = useCallback(() => {
+    if (volume > 0) {
+      preMuteVolume.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(preMuteVolume.current || 1);
+    }
+  }, [volume, setVolume]);
+
   const handleClearSaves = useCallback(() => {
     const removed = clearSaves(swfUrl);
     if (removed > 0) setSaveBytes(0);
@@ -401,6 +428,29 @@ export default function RufflePlayer({
         >
           Fullscreen
         </button>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleMute}
+            disabled={status !== "ready"}
+            aria-label={volume === 0 ? "Unmute" : "Mute"}
+            className="rounded-md border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <span aria-hidden>{volume === 0 ? "🔇" : "🔊"}</span>
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            disabled={status !== "ready"}
+            onChange={(event) => setVolume(Number(event.target.value))}
+            aria-label="Volume"
+            className="h-1 w-24 cursor-pointer accent-emerald-500 disabled:opacity-40"
+          />
+        </div>
 
         {saveBytes > 0 ? (
           <button
