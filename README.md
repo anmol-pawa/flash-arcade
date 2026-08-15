@@ -69,6 +69,19 @@ focus events are suppressed entirely while the document itself is unfocused, and
 games write saves whenever they like. It should never claim the keyboard is
 connected when it isn't.
 
+### Download progress
+
+Ruffle fetches the movie itself and reports nothing while it does, so a large
+title sat on a featureless spinner — the most-played game in the collection is
+36 MB. The player downloads the SWF itself instead, streaming the response so it
+can show real progress, then hands the bytes to Ruffle as an object URL. The file
+is still fetched exactly once.
+
+Anything that makes progress unmeasurable — a missing `content-length`, an
+unsupported stream, a failed request — falls back to handing Ruffle the plain URL
+and the old spinner. Not being able to draw a progress bar is never a reason to
+fail the game.
+
 ### Volume, and the shortcuts that aren't there
 
 Volume is a slider plus a mute toggle, remembered across games and tabs.

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RufflePlayerElement, RuffleInstance } from "@/types/ruffle";
 import { clearSaves, saveSize } from "@/lib/ruffleSaves";
 import { useVolume } from "@/lib/useVolume";
+import { fetchSwfWithProgress, formatBytes, type Progress } from "@/lib/fetchSwf";
 
 const RUFFLE_SCRIPT = "/ruffle/ruffle.js";
 
@@ -106,6 +107,8 @@ export default function RufflePlayer({
   /** Tracked from real focus events — never assumed. */
   const [hasFocus, setHasFocus] = useState(false);
   const [volume, setVolume] = useVolume();
+  /** Null until the first chunk arrives, or when progress can't be measured. */
+  const [progress, setProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -117,6 +120,9 @@ export default function RufflePlayer({
     let element: RufflePlayerElement | null = null;
     let panicObserver: MutationObserver | null = null;
     let metadataTimer: number | undefined;
+    // Aborts an in-flight SWF download when the player unmounts mid-fetch.
+    const fetchAbort = new AbortController();
+    let revokeSource: (() => void) | undefined;
 
     // Ruffle's shadow root uses delegatesFocus, so focusing the host forwards
     // focus to an inner element. `focus`/`blur` don't bubble and never reach a
@@ -162,9 +168,25 @@ export default function RufflePlayer({
           logLevel: "error",
         };
 
-        return instance.load(
-          baseUrl ? { url: swfUrl, base: baseUrl } : { url: swfUrl }
-        );
+        // Download here rather than letting Ruffle do it, so the wait on a
+        // 36 MB movie shows real progress instead of a blank spinner. Falls
+        // back to handing Ruffle the URL when progress can't be measured.
+        return fetchSwfWithProgress(
+          swfUrl,
+          (next) => {
+            if (!cancelled) setProgress(next);
+          },
+          fetchAbort.signal
+        ).then((source) => {
+          if (cancelled) {
+            source.revoke?.();
+            return;
+          }
+          revokeSource = source.revoke;
+          return instance.load(
+            baseUrl ? { url: source.url, base: baseUrl } : { url: source.url }
+          );
+        });
       })
       .then(() => {
         if (cancelled || !element) return;
@@ -261,6 +283,7 @@ export default function RufflePlayer({
 
     return () => {
       cancelled = true;
+      fetchAbort.abort();
       panicObserver?.disconnect();
       if (metadataTimer !== undefined) window.clearTimeout(metadataTimer);
       document.removeEventListener("focusin", syncFocus);
@@ -275,6 +298,9 @@ export default function RufflePlayer({
         // The player may already be torn down; nothing useful to do here.
       }
       element?.remove();
+      // Released only after the player is gone: Ruffle holds the object URL
+      // for the life of the movie.
+      revokeSource?.();
     };
   }, [swfUrl, baseUrl, archiveUrl]);
 
@@ -401,12 +427,36 @@ export default function RufflePlayer({
       >
         <div ref={containerRef} className="absolute inset-0" />
         {status === "loading" ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black px-8">
             <div
               className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-400"
               aria-hidden
             />
-            <p className="text-sm text-zinc-500">Starting the emulator…</p>
+            {progress ? (
+              <>
+                <div
+                  className="h-1 w-full max-w-xs overflow-hidden rounded-full bg-zinc-800"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={progress.total}
+                  aria-valuenow={progress.loaded}
+                  aria-label="Downloading game"
+                >
+                  <div
+                    className="h-full bg-emerald-400 transition-[width] duration-150"
+                    style={{
+                      width: `${Math.round((progress.loaded / progress.total) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-sm text-zinc-500">
+                  Downloading {formatBytes(progress.loaded)} of{" "}
+                  {formatBytes(progress.total)}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-zinc-500">Starting the emulator…</p>
+            )}
           </div>
         ) : null}
       </div>
