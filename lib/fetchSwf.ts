@@ -9,12 +9,17 @@
  * still only downloaded once.
  */
 
-export interface SwfSource {
-  /** URL to hand to Ruffle — an object URL when prefetched. */
-  url: string;
-  /** Set when an object URL was created and must be revoked after use. */
-  revoke?: () => void;
-}
+export type SwfSource =
+  /** Prefetched. `url` is an object URL that must be revoked after use. */
+  | { kind: "ready"; url: string; revoke: () => void }
+  /** Progress couldn't be measured; let Ruffle fetch the URL itself. */
+  | { kind: "passthrough"; url: string }
+  /**
+   * The Archive refused or couldn't be reached. Reported rather than silently
+   * falling through, so the UI can say the library is unreachable instead of
+   * blaming the game, and so Ruffle doesn't repeat a request known to fail.
+   */
+  | { kind: "unavailable"; status: number };
 
 export interface Progress {
   loaded: number;
@@ -22,32 +27,41 @@ export interface Progress {
 }
 
 /**
- * Falls back to the plain URL — letting Ruffle fetch as before — whenever
- * progress can't be tracked. A missing content-length or an unsupported stream
- * is a reason to skip the progress bar, never a reason to fail the game.
+ * Two different fallbacks, deliberately kept apart:
+ *
+ *  - Progress can't be measured (no content-length, no stream) → passthrough.
+ *    Not being able to draw a progress bar is never a reason to fail a game.
+ *  - The Archive says no, or can't be reached → unavailable. Reporting this
+ *    lets the UI blame the outage instead of the game, which matters: during an
+ *    archive.org outage the old code fell through to Ruffle, which failed too,
+ *    and the player was told the game was incompatible.
  */
 export async function fetchSwfWithProgress(
   url: string,
   onProgress: (progress: Progress) => void,
   signal: AbortSignal
 ): Promise<SwfSource> {
-  const plain: SwfSource = { url };
+  const passthrough: SwfSource = { kind: "passthrough", url };
 
-  if (typeof window === "undefined") return plain;
+  if (typeof window === "undefined") return passthrough;
   // Only same-origin proxy paths; blob/data URLs are already local.
-  if (!url.startsWith("/")) return plain;
+  if (!url.startsWith("/")) return passthrough;
 
   let response: Response;
   try {
     response = await fetch(url, { signal });
   } catch {
-    return plain;
+    // Aborted navigations are handled by the caller's cancelled flag; anything
+    // else here means the request never completed at all.
+    if (signal.aborted) return passthrough;
+    return { kind: "unavailable", status: 0 };
   }
 
-  if (!response.ok || !response.body) return plain;
+  if (!response.ok) return { kind: "unavailable", status: response.status };
+  if (!response.body) return passthrough;
 
   const total = Number(response.headers.get("content-length") ?? 0);
-  if (!Number.isFinite(total) || total <= 0) return plain;
+  if (!Number.isFinite(total) || total <= 0) return passthrough;
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -64,14 +78,14 @@ export async function fetchSwfWithProgress(
       }
     }
   } catch {
-    // Aborted (navigation) or the stream broke. Release anything queued and let
-    // Ruffle fetch normally rather than leaving the player with no movie.
+    // Aborted (navigation) or the stream broke mid-transfer. Release anything
+    // queued and let Ruffle try normally rather than leaving it with no movie.
     try {
       await reader.cancel();
     } catch {
       // Already closed.
     }
-    return plain;
+    return passthrough;
   }
 
   const blob = new Blob(chunks as BlobPart[], {
@@ -80,6 +94,7 @@ export async function fetchSwfWithProgress(
   const objectUrl = URL.createObjectURL(blob);
 
   return {
+    kind: "ready",
     url: objectUrl,
     revoke: () => URL.revokeObjectURL(objectUrl),
   };

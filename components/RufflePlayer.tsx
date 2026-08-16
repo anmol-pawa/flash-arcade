@@ -52,6 +52,14 @@ function loadRuffleScript(): Promise<void> {
 type Status = "loading" | "ready" | "error";
 
 /**
+ * "unavailable" means the Archive couldn't serve the file — a transient outage
+ * or a missing item. "incompatible" means the emulator itself gave up. They get
+ * different cards because telling someone their game is unsupported when
+ * archive.org is simply down sends them chasing the wrong problem.
+ */
+type ErrorKind = "unavailable" | "incompatible";
+
+/**
  * Turn Ruffle's panic screen into one line of plain English. Its own wording is
  * aimed at developers and is styled for its shadow DOM, so we surface our own.
  */
@@ -97,7 +105,10 @@ export default function RufflePlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<RuffleInstance | null>(null);
   const [status, setStatus] = useState<Status>("loading");
+  const [errorKind, setErrorKind] = useState<ErrorKind>("incompatible");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  /** Bumped to force a fresh mount when the player retries after an outage. */
+  const [attempt, setAttempt] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   /** Read from Ruffle's SWF header metadata once the movie runs — see below. */
   const [stage, setStage] = useState<{ ratio: string; background: string | null } | null>(
@@ -109,6 +120,9 @@ export default function RufflePlayer({
   const [volume, setVolume] = useVolume();
   /** Null until the first chunk arrives, or when progress can't be measured. */
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  /** Set when the browser refuses fullscreen, so the button isn't a dead end. */
+  const [fullscreenBlocked, setFullscreenBlocked] = useState(false);
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -179,10 +193,24 @@ export default function RufflePlayer({
           fetchAbort.signal
         ).then((source) => {
           if (cancelled) {
-            source.revoke?.();
+            if (source.kind === "ready") source.revoke();
             return;
           }
-          revokeSource = source.revoke;
+
+          if (source.kind === "unavailable") {
+            setErrorKind("unavailable");
+            setErrorMessage(
+              source.status === 404
+                ? "The Internet Archive has no file at this address."
+                : source.status > 0
+                  ? `The Internet Archive returned ${source.status}.`
+                  : "The Internet Archive couldn't be reached."
+            );
+            setStatus("error");
+            return;
+          }
+
+          if (source.kind === "ready") revokeSource = source.revoke;
           return instance.load(
             baseUrl ? { url: source.url, base: baseUrl } : { url: source.url }
           );
@@ -209,7 +237,15 @@ export default function RufflePlayer({
             // Already torn down.
           }
           instanceRef.current = null;
-          setErrorMessage(classifyPanic(panic.textContent ?? "", !archiveUrl));
+          const text = panic.textContent ?? "";
+          // A Ruffle panic that is really a failed download still points at the
+          // Archive, not at the game's compatibility.
+          setErrorKind(
+            text.toLowerCase().includes("failed to load")
+              ? "unavailable"
+              : "incompatible"
+          );
+          setErrorMessage(classifyPanic(text, !archiveUrl));
           setStatus("error");
           return true;
         };
@@ -273,8 +309,10 @@ export default function RufflePlayer({
         }
       })
       .catch((error: unknown) => {
-        // Reached when the emulator script itself fails to load.
+        // Reached when the emulator script itself fails to load — worth
+        // retrying, and not the game's fault either.
         if (cancelled) return;
+        setErrorKind("unavailable");
         setErrorMessage(
           error instanceof Error ? error.message : "This game could not be started."
         );
@@ -302,7 +340,16 @@ export default function RufflePlayer({
       // for the life of the movie.
       revokeSource?.();
     };
-  }, [swfUrl, baseUrl, archiveUrl]);
+    // `attempt` re-runs this whole effect, which is exactly what a retry needs:
+    // a fresh player, a fresh download, no leftover state from the failure.
+  }, [swfUrl, baseUrl, archiveUrl, attempt]);
+
+  const handleRetry = useCallback(() => {
+    setStatus("loading");
+    setErrorMessage("");
+    setProgress(null);
+    setAttempt((n) => n + 1);
+  }, []);
 
   // Two things the status line reports that have no event to subscribe to:
   //
@@ -320,6 +367,13 @@ export default function RufflePlayer({
     const reconcile = () => {
       const player = container?.firstElementChild ?? null;
       setHasFocus(player !== null && document.activeElement === player);
+      // Reconciled rather than assumed, because fullscreen can end by routes we
+      // never see: Esc, F11, the browser's own exit affordance, or the OS.
+      const fullscreen = document.fullscreenElement !== null;
+      setIsFullscreen(fullscreen);
+      // Fullscreen working is proof it isn't blocked — clear a stale warning
+      // from an earlier refusal rather than leaving it contradicting the state.
+      if (fullscreen) setFullscreenBlocked(false);
       // Local files get a throwaway blob URL, so their saves can't be looked up
       // stably and there is nothing meaningful to report.
       if (swfUrl.startsWith("/")) setSaveBytes(saveSize(swfUrl));
@@ -327,7 +381,12 @@ export default function RufflePlayer({
 
     reconcile();
     const timer = window.setInterval(reconcile, 1_000);
-    return () => window.clearInterval(timer);
+    // The event gives an immediate update; the interval above is the safety net.
+    document.addEventListener("fullscreenchange", reconcile);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("fullscreenchange", reconcile);
+    };
   }, [swfUrl, status]);
 
   // Apply the remembered level to whichever movie is currently loaded.
@@ -372,8 +431,34 @@ export default function RufflePlayer({
     }
   }, []);
 
-  const goFullscreen = useCallback(() => {
-    instanceRef.current?.enterFullscreen();
+  const toggleFullscreen = useCallback(() => {
+    const instance = instanceRef.current;
+    if (!instance) return;
+
+    if (document.fullscreenElement) {
+      try {
+        instance.exitFullscreen();
+      } catch {
+        // Already out; the reconcile below corrects the label either way.
+      }
+      return;
+    }
+
+    setFullscreenBlocked(false);
+    try {
+      instance.enterFullscreen();
+    } catch {
+      setFullscreenBlocked(true);
+      return;
+    }
+
+    // Ruffle calls requestFullscreen internally and swallows the result, so
+    // confirm from the DOM instead of assuming it worked. Some contexts refuse
+    // outright (embedded frames, kiosk policies) and the button would otherwise
+    // look broken with no explanation.
+    window.setTimeout(() => {
+      if (!document.fullscreenElement) setFullscreenBlocked(true);
+    }, 400);
   }, []);
 
   // Prefer Ruffle's SWF-header metadata; fall back to the Archive's
@@ -383,30 +468,52 @@ export default function RufflePlayer({
     stage?.ratio ?? (width && height ? `${width} / ${height}` : "4 / 3");
 
   if (status === "error") {
+    const unavailable = errorKind === "unavailable";
     return (
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-8 text-center">
         <h2 className="text-lg font-semibold text-amber-200">
-          This one won&apos;t run
+          {unavailable ? "Couldn’t load this game" : "This one won’t run"}
         </h2>
         <p className="mx-auto mt-3 max-w-prose text-sm leading-relaxed text-zinc-400">
-          Ruffle couldn&apos;t start <span className="text-zinc-200">{title}</span>. No
-          emulator covers all of Flash yet — games built on later ActionScript 3
-          features, or ones that talked to servers now switched off, are the usual
-          casualties.
+          {unavailable ? (
+            <>
+              <span className="text-zinc-200">{title}</span> couldn&apos;t be fetched.
+              The Internet Archive may be having a moment — this is usually
+              temporary and nothing to do with the game itself.
+            </>
+          ) : (
+            <>
+              Ruffle couldn&apos;t start <span className="text-zinc-200">{title}</span>.
+              No emulator covers all of Flash yet — games built on later
+              ActionScript 3 features, or ones that talked to servers now switched
+              off, are the usual casualties.
+            </>
+          )}
         </p>
         {errorMessage ? (
           <p className="mt-3 font-mono text-xs text-zinc-600">{errorMessage}</p>
         ) : null}
-        {archiveUrl ? (
-          <a
-            href={archiveUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-5 inline-block rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
-          >
-            View on the Internet Archive →
-          </a>
-        ) : null}
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          {unavailable ? (
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="rounded-md border border-emerald-500/60 px-4 py-2 text-sm text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"
+            >
+              Try again
+            </button>
+          ) : null}
+          {archiveUrl ? (
+            <a
+              href={archiveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+            >
+              View on the Internet Archive →
+            </a>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -472,11 +579,12 @@ export default function RufflePlayer({
         </button>
         <button
           type="button"
-          onClick={goFullscreen}
+          onClick={toggleFullscreen}
           disabled={status !== "ready"}
+          title="Press Esc to leave fullscreen"
           className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Fullscreen
+          {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
         </button>
 
         <div className="flex items-center gap-2">
@@ -518,11 +626,15 @@ export default function RufflePlayer({
               connected when it isn't. */}
           {status !== "ready"
             ? null
-            : hasFocus
-              ? saveBytes > 0
-                ? "Keyboard ready · progress saved on this device"
-                : "Keyboard ready"
-              : "Click the game to use your keyboard"}
+            : fullscreenBlocked
+              ? "This browser wouldn’t allow fullscreen here."
+              : isFullscreen
+                ? "Press Esc to leave fullscreen"
+                : hasFocus
+                  ? saveBytes > 0
+                    ? "Keyboard ready · progress saved on this device"
+                    : "Keyboard ready"
+                  : "Click the game to use your keyboard"}
         </p>
       </div>
     </div>

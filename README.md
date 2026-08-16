@@ -69,6 +69,28 @@ focus events are suppressed entirely while the document itself is unfocused, and
 games write saves whenever they like. It should never claim the keyboard is
 connected when it isn't.
 
+### Fullscreen
+
+Ruffle drives the **native Fullscreen API** (`requestFullscreen`/`exitFullscreen`),
+which is why **Esc already exits** — the browser handles that itself and page
+script cannot intercept it. The string `Escape` does not appear anywhere in
+Ruffle's bundle; nothing here re-implements it.
+
+The button is a real toggle, and its label is reconciled from
+`document.fullscreenElement` rather than from what we last asked for. Fullscreen
+can end by routes the page never initiates — Esc, F11, the browser's own exit
+control, the OS — and a label tracking intent instead of state would go wrong on
+every one of them.
+
+Some contexts refuse fullscreen outright (embedded frames, kiosk policies).
+Ruffle calls `requestFullscreen` internally and swallows the result, so the
+button confirms from the DOM shortly after and says plainly that the browser
+refused, instead of appearing to do nothing.
+
+There is deliberately no double-click-to-fullscreen. Rapid clicking is the core
+input of a great many Flash games, and it would fire constantly during normal
+play.
+
 ### Download progress
 
 Ruffle fetches the movie itself and reports nothing while it does, so a large
