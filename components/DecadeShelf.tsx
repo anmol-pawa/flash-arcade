@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import GameCard from "@/components/GameCard";
 import { DECADES, type DecadeKey, type GameSummary } from "@/lib/archive";
 
@@ -10,10 +11,13 @@ import { DECADES, type DecadeKey, type GameSummary } from "@/lib/archive";
 export default function DecadeShelf({
   decade,
   games,
+  total,
   failed,
 }: {
   decade: DecadeKey;
   games: GameSummary[];
+  /** Everything the Archive has for this era, not just the shown top slice. */
+  total: number;
   failed: boolean;
 }) {
   const { label, from, to } = DECADES[decade];
@@ -25,6 +29,19 @@ export default function DecadeShelf({
         <p className="text-xs text-zinc-600">
           {from}–{to} · ranked by plays
         </p>
+      </div>
+
+      {/* Past the top 30, hand off to the main grid rather than paginating here:
+          it already has infinite scroll, and search and genre stay available. */}
+      <div className="flex justify-end">
+        {!failed && total > games.length ? (
+          <Link
+            href={`/?era=${decade}&collection=everything`}
+            className="text-xs text-emerald-400 underline underline-offset-4 transition hover:text-emerald-300"
+          >
+            Browse all {total.toLocaleString()} from the {label} →
+          </Link>
+        ) : null}
       </div>
 
       {failed ? (

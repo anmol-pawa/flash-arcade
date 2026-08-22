@@ -24,6 +24,7 @@ const TOP_N = 30;
 
 async function DecadeSection({ decade }: { decade: DecadeKey }) {
   let games: GameSummary[] = [];
+  let total = 0;
   let failed = false;
 
   try {
@@ -35,11 +36,14 @@ async function DecadeSection({ decade }: { decade: DecadeKey }) {
       page: 1,
     });
     games = result.games;
+    total = result.total;
   } catch {
     failed = true;
   }
 
-  return <DecadeShelf decade={decade} games={games} failed={failed} />;
+  return (
+    <DecadeShelf decade={decade} games={games} total={total} failed={failed} />
+  );
 }
 
 function ShelfSkeleton() {

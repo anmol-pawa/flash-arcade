@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import ArcadeBrowser from "@/components/ArcadeBrowser";
+import ContinuePlaying from "@/components/ContinuePlaying";
 import { DECADES, type DecadeKey } from "@/lib/archive";
 
 function BrowserFallback() {
@@ -51,6 +52,10 @@ export default function HomePage() {
           ))}
         </p>
       </section>
+
+      {/* Renders nothing for a first-time visitor, so the library stays the
+          first thing on the page. */}
+      <ContinuePlaying />
 
       {/* useSearchParams opts its subtree into client rendering, so the hero
           above still ships as prerendered HTML. */}
