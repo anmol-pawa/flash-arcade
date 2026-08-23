@@ -76,6 +76,16 @@ which is why **Esc already exits** — the browser handles that itself and page
 script cannot intercept it. The string `Escape` does not appear anywhere in
 Ruffle's bundle; nothing here re-implements it.
 
+The request is made **directly on our own stage wrapper**, synchronously inside
+the click handler. Ruffle's `enterFullscreen()` targets an element inside its
+shadow root and discards the returned promise, so a rejection never surfaced and
+the button simply looked dead. When the browser does refuse, the actual
+`name: message` is shown rather than a generic apology.
+
+Fullscreen also drops the aspect-ratio and `max-height`/`max-width` caps that
+size the windowed stage. Leaving them on shrank the game to a small letterboxed
+box in the middle of an otherwise black screen.
+
 The button is a real toggle, and its label is reconciled from
 `document.fullscreenElement` rather than from what we last asked for. Fullscreen
 can end by routes the page never initiates — Esc, F11, the browser's own exit

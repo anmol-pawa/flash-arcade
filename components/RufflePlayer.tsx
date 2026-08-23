@@ -103,6 +103,8 @@ export default function RufflePlayer({
   archiveUrl,
 }: RufflePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Our own stage wrapper. We fullscreen this, not Ruffle's inner element. */
+  const stageRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<RuffleInstance | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [errorKind, setErrorKind] = useState<ErrorKind>("incompatible");
@@ -122,7 +124,7 @@ export default function RufflePlayer({
   const [progress, setProgress] = useState<Progress | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   /** Set when the browser refuses fullscreen, so the button isn't a dead end. */
-  const [fullscreenBlocked, setFullscreenBlocked] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null);
 
   useEffect(() => {
     // `cancelled` guards against React's dev-mode double-mount and against the
@@ -373,7 +375,7 @@ export default function RufflePlayer({
       setIsFullscreen(fullscreen);
       // Fullscreen working is proof it isn't blocked — clear a stale warning
       // from an earlier refusal rather than leaving it contradicting the state.
-      if (fullscreen) setFullscreenBlocked(false);
+      if (fullscreen) setFullscreenError(null);
       // Local files get a throwaway blob URL, so their saves can't be looked up
       // stably and there is nothing meaningful to report.
       if (swfUrl.startsWith("/")) setSaveBytes(saveSize(swfUrl));
@@ -432,33 +434,25 @@ export default function RufflePlayer({
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    const instance = instanceRef.current;
-    if (!instance) return;
-
     if (document.fullscreenElement) {
-      try {
-        instance.exitFullscreen();
-      } catch {
-        // Already out; the reconcile below corrects the label either way.
-      }
+      void document.exitFullscreen().catch(() => {
+        // Already out; the reconcile pass corrects the label either way.
+      });
       return;
     }
 
-    setFullscreenBlocked(false);
-    try {
-      instance.enterFullscreen();
-    } catch {
-      setFullscreenBlocked(true);
-      return;
-    }
+    const stage = stageRef.current;
+    if (!stage) return;
 
-    // Ruffle calls requestFullscreen internally and swallows the result, so
-    // confirm from the DOM instead of assuming it worked. Some contexts refuse
-    // outright (embedded frames, kiosk policies) and the button would otherwise
-    // look broken with no explanation.
-    window.setTimeout(() => {
-      if (!document.fullscreenElement) setFullscreenBlocked(true);
-    }, 400);
+    setFullscreenError(null);
+    // Called directly, synchronously, inside the click handler. Ruffle's own
+    // enterFullscreen() targets an element inside its shadow root and discards
+    // the promise, so a rejection never surfaced and the button looked broken.
+    stage.requestFullscreen({ navigationUI: "hide" }).catch((error: unknown) => {
+      const name = error instanceof Error ? error.name : "Error";
+      const message = error instanceof Error ? error.message : String(error);
+      setFullscreenError(`${name}: ${message}`.slice(0, 140));
+    });
   }, []);
 
   // Prefer Ruffle's SWF-header metadata; fall back to the Archive's
@@ -523,14 +517,26 @@ export default function RufflePlayer({
       {/* Cap the stage height so a 4:3 game doesn't fill a tall viewport; the
           width derives from the aspect ratio, keeping the stage centred. */}
       <div
-        className="relative mx-auto w-full overflow-hidden rounded-lg border border-zinc-800"
-        style={{
-          aspectRatio,
-          maxHeight: "72vh",
-          maxWidth: `calc(72vh * (${aspectRatio}))`,
-          // Match the movie's own stage colour so letterbox bars don't clash.
-          backgroundColor: stage?.background ?? "#000",
-        }}
+        ref={stageRef}
+        className={
+          isFullscreen
+            ? "relative h-full w-full overflow-hidden"
+            : "relative mx-auto w-full overflow-hidden rounded-lg border border-zinc-800"
+        }
+        style={
+          isFullscreen
+            ? // Fill the screen. Keeping the aspect-ratio and max-* caps here
+              // would letterbox the stage down to a small box in the middle of
+              // an otherwise black display.
+              { backgroundColor: stage?.background ?? "#000" }
+            : {
+                aspectRatio,
+                maxHeight: "72vh",
+                maxWidth: `calc(72vh * (${aspectRatio}))`,
+                // Match the movie's own stage colour so letterbox bars don't clash.
+                backgroundColor: stage?.background ?? "#000",
+              }
+        }
       >
         <div ref={containerRef} className="absolute inset-0" />
         {status === "loading" ? (
@@ -626,8 +632,8 @@ export default function RufflePlayer({
               connected when it isn't. */}
           {status !== "ready"
             ? null
-            : fullscreenBlocked
-              ? "This browser wouldn’t allow fullscreen here."
+            : fullscreenError
+              ? `Fullscreen refused — ${fullscreenError}`
               : isFullscreen
                 ? "Press Esc to leave fullscreen"
                 : hasFocus
