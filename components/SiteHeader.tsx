@@ -21,6 +21,17 @@ export default function SiteHeader() {
           <Link href="/decades" className="text-zinc-400 transition hover:text-white">
             By decade
           </Link>
+          {/* Plain link, not a button: /random is a server redirect, so this
+              works without client JS. `prefetch={false}` matters — prefetching
+              would resolve a game on hover and then serve a different one on
+              click, or burn an Archive lookup for a link never followed. */}
+          <Link
+            href="/random"
+            prefetch={false}
+            className="text-zinc-400 transition hover:text-emerald-300"
+          >
+            Surprise me
+          </Link>
           <Link href="/favorites" className="text-zinc-400 transition hover:text-white">
             My shelf
           </Link>

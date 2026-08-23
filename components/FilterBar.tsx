@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   COLLECTIONS,
   DECADES,
@@ -60,6 +60,7 @@ export default function FilterBar({
   filters: Filters;
   onChange: (next: Filters) => void;
 }) {
+  const searchRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState(filters.search);
   const [syncedSearch, setSyncedSearch] = useState(filters.search);
 
@@ -70,6 +71,29 @@ export default function FilterBar({
     setSyncedSearch(filters.search);
     setInput(filters.search);
   }
+
+  // "/" jumps to search, the convention on any site with a search box.
+  //
+  // Safe only because this bar lives on the library page. The play page
+  // deliberately has no single-key shortcuts: the emulator holds keyboard
+  // focus there and any letter bound would be stolen from the game.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const active = document.activeElement;
+      const typing =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        (active instanceof HTMLElement && active.isContentEditable);
+      if (typing) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Debounce typing so the Archive isn't hit on every keystroke.
   useEffect(() => {
@@ -87,6 +111,7 @@ export default function FilterBar({
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
           <input
+            ref={searchRef}
             type="search"
             value={input}
             onChange={(event) => setInput(event.target.value)}

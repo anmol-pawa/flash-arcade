@@ -166,6 +166,10 @@ npm install @ruffle-rs/ruffle@latest && cp node_modules/@ruffle-rs/ruffle/*.js n
 
 Filters compose: *puzzle · 2000s · "bobble"* is a single query.
 
+**Surprise me** (`/random`) redirects to a random playable game. It draws a page from anywhere in the collection rather than the popular head, and verifies candidates with `getGame` before redirecting — roughly one item in twenty-five holds no SWF, and landing on "nothing to play" is a poor surprise. It is a plain server redirect, so it works without client JS; the link sets `prefetch={false}`, since prefetching would resolve one game on hover and then serve a different one on click.
+
+**`/` focuses the search box.** Only on the library page — the play page deliberately has no single-key shortcuts, because the emulator holds keyboard focus there and any letter bound would be taken from the game. The handler ignores modifier combinations and does nothing while you are already typing.
+
 A **Continue playing** rail sits above the library once you've played something, drawn from the same device-local history as the shelf. It renders nothing for a first-time visitor rather than showing an empty rail explaining what would go there.
 
 Each decade shelf links into the main grid (`/?era=2000s&collection=everything`) once you want more than its top 30 — the grid already has infinite scroll, and search and genre stay available there, so there is no second pagination system to maintain.
