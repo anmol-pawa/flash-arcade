@@ -1,72 +1,86 @@
 import "server-only";
 
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { Pool, type PoolClient } from "pg";
 
 /**
- * Durable storage for a visitor's shelf and their in-game progress.
+ * Postgres store for a visitor's shelf and in-game progress.
  *
- * Everything used to live in localStorage, which is lost whenever the browser
- * clears site data for the origin — so a shelf could vanish between visits
- * through no fault of the app. The browser copy is still the fast path; this is
- * the copy that survives.
- *
- * SQLite via node:sqlite: a built-in, so there is no native module to compile,
- * and the whole store is a single file that can be deleted to reset.
+ * The database is an enhancement, not a hard dependency: if it is unreachable
+ * the app still runs perfectly well on the browser's own localStorage, just
+ * without anything surviving a storage clear. That is why every entry point
+ * throws a typed error the routes turn into a 503, rather than crashing the
+ * request — someone who only wants to play a game should not be blocked because
+ * Docker happens to be stopped.
  */
 
-const DB_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DB_DIR, "arcade.db");
+export class DatabaseUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super("The database is not reachable.");
+    this.name = "DatabaseUnavailableError";
+    this.cause = cause;
+  }
+}
 
-let db: DatabaseSync | null = null;
+let pool: Pool | null = null;
+let schemaReady: Promise<void> | null = null;
 
-function connect(): DatabaseSync {
-  if (db) return db;
+function getPool(): Pool {
+  if (pool) return pool;
 
-  mkdirSync(DB_DIR, { recursive: true });
-  const connection = new DatabaseSync(DB_PATH);
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) throw new DatabaseUnavailableError("DATABASE_URL is not set");
 
-  // WAL lets reads proceed during writes, which matters because every page
-  // load reads the shelf while gameplay may be writing a save.
-  connection.exec("PRAGMA journal_mode = WAL");
-  connection.exec("PRAGMA foreign_keys = ON");
+  pool = new Pool({
+    connectionString,
+    // Small: this is a single local app, and an oversized pool just moves
+    // contention from the app into Postgres' connection slots.
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    // Fail fast rather than leaving a request hanging when Docker is stopped.
+    connectionTimeoutMillis: 4_000,
+  });
 
-  connection.exec(`
-    CREATE TABLE IF NOT EXISTS devices (
-      id            TEXT PRIMARY KEY,
-      created_at    INTEGER NOT NULL,
-      last_seen_at  INTEGER NOT NULL
-    );
+  // A pool that emits an unhandled 'error' takes the process down. Idle backend
+  // errors are expected (container restart) and must not be fatal.
+  pool.on("error", () => {
+    schemaReady = null;
+  });
 
-    CREATE TABLE IF NOT EXISTS shelf_entries (
-      device_id   TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-      kind        TEXT NOT NULL CHECK (kind IN ('favorite', 'recent')),
-      identifier  TEXT NOT NULL,
-      title       TEXT NOT NULL,
-      played_at   INTEGER,
-      updated_at  INTEGER NOT NULL,
-      PRIMARY KEY (device_id, kind, identifier)
-    );
+  return pool;
+}
 
-    -- Every read is "this device, this kind, newest first".
-    CREATE INDEX IF NOT EXISTS idx_shelf_lookup
-      ON shelf_entries (device_id, kind, updated_at DESC);
+/** Applies the schema once per process; every statement is idempotent. */
+async function ensureSchema(): Promise<void> {
+  if (schemaReady) return schemaReady;
 
-    CREATE TABLE IF NOT EXISTS game_saves (
-      device_id   TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-      save_key    TEXT NOT NULL,
-      payload     TEXT NOT NULL,
-      updated_at  INTEGER NOT NULL,
-      PRIMARY KEY (device_id, save_key)
-    );
+  schemaReady = (async () => {
+    const sql = readFileSync(path.join(process.cwd(), "db", "schema.sql"), "utf8");
+    await getPool().query(sql);
+  })().catch((error) => {
+    // Do not cache the failure: the next request should retry, so starting
+    // Docker recovers the app without restarting it.
+    schemaReady = null;
+    throw new DatabaseUnavailableError(error);
+  });
 
-    CREATE INDEX IF NOT EXISTS idx_saves_device
-      ON game_saves (device_id, updated_at DESC);
-  `);
+  return schemaReady;
+}
 
-  db = connection;
-  return db;
+async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  await ensureSchema();
+  let client: PoolClient;
+  try {
+    client = await getPool().connect();
+  } catch (error) {
+    throw new DatabaseUnavailableError(error);
+  }
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
 }
 
 export interface ShelfEntryRow {
@@ -80,128 +94,143 @@ export interface ShelfState {
   recents: ShelfEntryRow[];
 }
 
-export function touchDevice(deviceId: string): void {
-  const now = Date.now();
-  connect()
-    .prepare(
-      `INSERT INTO devices (id, created_at, last_seen_at) VALUES (?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at`
-    )
-    .run(deviceId, now, now);
+async function touchDevice(client: PoolClient, deviceId: string): Promise<void> {
+  await client.query(
+    `INSERT INTO devices (id) VALUES ($1)
+     ON CONFLICT (id) DO UPDATE SET last_seen_at = now()`,
+    [deviceId]
+  );
 }
 
-function readKind(deviceId: string, kind: "favorite" | "recent"): ShelfEntryRow[] {
-  const rows = connect()
-    .prepare(
-      `SELECT identifier, title, played_at FROM shelf_entries
-       WHERE device_id = ? AND kind = ?
-       ORDER BY updated_at DESC`
-    )
-    .all(deviceId, kind) as {
-    identifier: string;
-    title: string;
-    played_at: number | null;
-  }[];
+export async function readShelf(deviceId: string): Promise<ShelfState> {
+  return withClient(async (client) => {
+    const { rows } = await client.query<{
+      kind: string;
+      identifier: string;
+      title: string;
+      played_at: Date | null;
+    }>(
+      `SELECT kind, identifier, title, played_at
+         FROM shelf_entries
+        WHERE device_id = $1
+        ORDER BY kind, position DESC`,
+      [deviceId]
+    );
 
-  return rows.map((row) => ({
-    identifier: row.identifier,
-    title: row.title,
-    ...(row.played_at != null ? { playedAt: row.played_at } : {}),
-  }));
-}
-
-export function readShelf(deviceId: string): ShelfState {
-  return {
-    favorites: readKind(deviceId, "favorite"),
-    recents: readKind(deviceId, "recent"),
-  };
+    const state: ShelfState = { favorites: [], recents: [] };
+    for (const row of rows) {
+      const entry: ShelfEntryRow = {
+        identifier: row.identifier,
+        title: row.title,
+        ...(row.played_at ? { playedAt: row.played_at.getTime() } : {}),
+      };
+      if (row.kind === "favorite") state.favorites.push(entry);
+      else state.recents.push(entry);
+    }
+    return state;
+  });
 }
 
 /**
  * Replaces a device's shelf wholesale. The client sends the merged result of
- * server + local state, so a partial update would risk resurrecting entries the
- * user just removed.
+ * server + local state, so a partial update could resurrect entries the user
+ * just removed.
  */
-export function writeShelf(deviceId: string, state: ShelfState): void {
-  const connection = connect();
-  touchDevice(deviceId);
+export async function writeShelf(deviceId: string, state: ShelfState): Promise<void> {
+  return withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await touchDevice(client, deviceId);
 
-  const wipe = connection.prepare(
-    "DELETE FROM shelf_entries WHERE device_id = ? AND kind = ?"
-  );
-  const insert = connection.prepare(
-    `INSERT INTO shelf_entries
-       (device_id, kind, identifier, title, played_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(device_id, kind, identifier) DO UPDATE SET
-       title = excluded.title,
-       played_at = excluded.played_at,
-       updated_at = excluded.updated_at`
-  );
-
-  // One transaction: a crash mid-write must not leave a half-erased shelf.
-  connection.exec("BEGIN IMMEDIATE");
-  try {
-    for (const [kind, entries] of [
-      ["favorite", state.favorites],
-      ["recent", state.recents],
-    ] as const) {
-      wipe.run(deviceId, kind);
-      // Ordering is by updated_at DESC on read, so count downwards to preserve
-      // the order the client sent rather than collapsing to one timestamp.
-      let rank = entries.length;
-      for (const entry of entries) {
-        insert.run(
-          deviceId,
-          kind,
-          entry.identifier,
-          entry.title,
-          entry.playedAt ?? null,
-          rank
+      for (const [kind, entries] of [
+        ["favorite", state.favorites],
+        ["recent", state.recents],
+      ] as const) {
+        await client.query(
+          "DELETE FROM shelf_entries WHERE device_id = $1 AND kind = $2",
+          [deviceId, kind]
         );
-        rank -= 1;
+        if (entries.length === 0) continue;
+
+        // One multi-row INSERT rather than a statement per entry: same
+        // transaction either way, but a single round trip.
+        const values: unknown[] = [deviceId, kind];
+        const tuples = entries.map((entry, i) => {
+          const base = i * 4 + 3;
+          values.push(
+            entry.identifier,
+            entry.title,
+            entry.playedAt != null ? new Date(entry.playedAt) : null,
+            entries.length - i // position: preserves the order sent
+          );
+          return `($1, $2, $${base}, $${base + 1}, $${base + 2}, $${base + 3})`;
+        });
+
+        await client.query(
+          `INSERT INTO shelf_entries
+             (device_id, kind, identifier, title, played_at, position)
+           VALUES ${tuples.join(", ")}
+           ON CONFLICT (device_id, kind, identifier) DO UPDATE SET
+             title      = EXCLUDED.title,
+             played_at  = EXCLUDED.played_at,
+             position   = EXCLUDED.position,
+             updated_at = now()`,
+          values
+        );
       }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
     }
-    connection.exec("COMMIT");
-  } catch (error) {
-    connection.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
-export function readSaves(deviceId: string): Record<string, string> {
-  const rows = connect()
-    .prepare("SELECT save_key, payload FROM game_saves WHERE device_id = ?")
-    .all(deviceId) as { save_key: string; payload: string }[];
-
-  return Object.fromEntries(rows.map((row) => [row.save_key, row.payload]));
+export async function readSaves(deviceId: string): Promise<Record<string, string>> {
+  return withClient(async (client) => {
+    const { rows } = await client.query<{ save_key: string; payload: string }>(
+      "SELECT save_key, payload FROM game_saves WHERE device_id = $1",
+      [deviceId]
+    );
+    return Object.fromEntries(rows.map((row) => [row.save_key, row.payload]));
+  });
 }
 
 /** Upsert only — saves are never wiped wholesale, since each key is a game. */
-export function writeSaves(deviceId: string, saves: Record<string, string>): number {
-  const connection = connect();
-  touchDevice(deviceId);
+export async function writeSaves(
+  deviceId: string,
+  saves: Record<string, string>
+): Promise<number> {
+  const entries = Object.entries(saves);
+  if (entries.length === 0) return 0;
 
-  const upsert = connection.prepare(
-    `INSERT INTO game_saves (device_id, save_key, payload, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(device_id, save_key) DO UPDATE SET
-       payload = excluded.payload,
-       updated_at = excluded.updated_at`
-  );
+  return withClient(async (client) => {
+    await client.query("BEGIN");
+    try {
+      await touchDevice(client, deviceId);
 
-  const now = Date.now();
-  let written = 0;
-  connection.exec("BEGIN IMMEDIATE");
-  try {
-    for (const [key, payload] of Object.entries(saves)) {
-      upsert.run(deviceId, key, payload, now);
-      written += 1;
+      const values: unknown[] = [deviceId];
+      const tuples = entries.map(([key, payload], i) => {
+        const base = i * 2 + 2;
+        values.push(key, payload);
+        return `($1, $${base}, $${base + 1})`;
+      });
+
+      await client.query(
+        `INSERT INTO game_saves (device_id, save_key, payload)
+         VALUES ${tuples.join(", ")}
+         ON CONFLICT (device_id, save_key) DO UPDATE SET
+           payload    = EXCLUDED.payload,
+           updated_at = now()`,
+        values
+      );
+
+      await client.query("COMMIT");
+      return entries.length;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
     }
-    connection.exec("COMMIT");
-  } catch (error) {
-    connection.exec("ROLLBACK");
-    throw error;
-  }
-  return written;
+  });
 }

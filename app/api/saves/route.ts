@@ -1,5 +1,5 @@
 import { getDevice, persistDevice } from "@/lib/device";
-import { readSaves, writeSaves } from "@/lib/db";
+import { DatabaseUnavailableError, readSaves, writeSaves } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,14 @@ export async function GET() {
     await persistDevice(device.id);
     return Response.json({ saves: {} });
   }
-  return Response.json({ saves: readSaves(device.id) });
+  try {
+    return Response.json({ saves: await readSaves(device.id) });
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) {
+      return Response.json({ error: "Database unavailable" }, { status: 503 });
+    }
+    return Response.json({ error: "Could not read progress" }, { status: 500 });
+  }
 }
 
 export async function PUT(request: Request) {
@@ -43,9 +50,12 @@ export async function PUT(request: Request) {
   if (device.isNew) await persistDevice(device.id);
 
   try {
-    const written = writeSaves(device.id, clean);
+    const written = await writeSaves(device.id, clean);
     return Response.json({ saved: true, keys: written });
-  } catch {
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) {
+      return Response.json({ error: "Database unavailable" }, { status: 503 });
+    }
     return Response.json({ error: "Could not save progress" }, { status: 500 });
   }
 }

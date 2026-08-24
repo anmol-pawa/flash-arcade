@@ -1,5 +1,10 @@
 import { getDevice, persistDevice } from "@/lib/device";
-import { readShelf, writeShelf, type ShelfEntryRow } from "@/lib/db";
+import {
+  DatabaseUnavailableError,
+  readShelf,
+  writeShelf,
+  type ShelfEntryRow,
+} from "@/lib/db";
 
 /** Reads and writes the caller's own device row, so never cache it. */
 export const dynamic = "force-dynamic";
@@ -44,7 +49,16 @@ export async function GET() {
     await persistDevice(device.id);
     return Response.json({ favorites: [], recents: [] });
   }
-  return Response.json(readShelf(device.id));
+  try {
+    return Response.json(await readShelf(device.id));
+  } catch (error) {
+    // Without a database the browser still has its own copy, so this is a
+    // degraded state rather than a broken one.
+    if (error instanceof DatabaseUnavailableError) {
+      return Response.json({ error: "Database unavailable" }, { status: 503 });
+    }
+    return Response.json({ error: "Could not read shelf" }, { status: 500 });
+  }
 }
 
 export async function PUT(request: Request) {
@@ -65,8 +79,11 @@ export async function PUT(request: Request) {
   };
 
   try {
-    writeShelf(device.id, state);
-  } catch {
+    await writeShelf(device.id, state);
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) {
+      return Response.json({ error: "Database unavailable" }, { status: 503 });
+    }
     return Response.json({ error: "Could not save shelf" }, { status: 500 });
   }
 

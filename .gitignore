@@ -43,5 +43,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local sqlite database
-/data
+
+# sqlite store from the pre-postgres implementation
+/data.sqlite-backup

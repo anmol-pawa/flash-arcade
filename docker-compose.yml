@@ -1,0 +1,38 @@
+# Local Postgres for the shelf and game-save store.
+#
+#   docker compose up -d      start
+#   docker compose down       stop (data survives, it lives in the volume)
+#   docker compose down -v    stop and destroy the data
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: flash-arcade-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arcade
+      POSTGRES_PASSWORD: arcade
+      POSTGRES_DB: arcade
+      # Deterministic collation, so ORDER BY does not shift with host locale.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      # 5434 on the host: 5432 is a common local install, and 5433 is
+      # already taken by the stackcraft project's database.
+      - "5434:5432"
+    volumes:
+      # Postgres 18+ wants the mount at /var/lib/postgresql, NOT the
+      # /var/lib/postgresql/data path used for 17 and earlier. The image stores
+      # data in a major-version subdirectory beneath it so `pg_upgrade --link`
+      # works without crossing a mount boundary; pointing at .../data makes 18
+      # refuse to start.
+      - arcade-pgdata:/var/lib/postgresql
+    healthcheck:
+      # The app waits on this, so it must prove the database answers queries,
+      # not merely that the port is open.
+      test: ["CMD-SHELL", "pg_isready -U arcade -d arcade -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  arcade-pgdata:

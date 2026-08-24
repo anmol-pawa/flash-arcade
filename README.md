@@ -2,7 +2,7 @@
 
 A browser-based player for the Flash games that went dark when Adobe killed Flash Player on 31 December 2020. Search ~6,500 preserved titles and play them instantly — no plugin, no download, no Flash Player.
 
-**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · TanStack Query · Ruffle (Rust → WebAssembly)
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · TanStack Query · PostgreSQL 18 (Docker) · Ruffle (Rust → WebAssembly)
 
 ---
 
@@ -48,13 +48,18 @@ archive.org serves item downloads **without `Access-Control-Allow-Origin`**. Ruf
 
 `/api/asset/[identifier]/[...path]` is a catch-all proxy that makes the SWF *and* everything the game loads at runtime (XML level data, MP3 audio, sub-SWFs) same-origin. Ruffle's `base` is pointed at the proxy directory so relative asset loads inside the movie resolve correctly. The route validates the identifier against `^[A-Za-z0-9._-]+$`, rejects path traversal, forwards `Range` headers for seekable media, and caches immutably (Archive items never change once uploaded).
 
-### Persistence: SQLite, not just localStorage
+### Persistence: PostgreSQL
 
 The shelf and in-game progress used to live only in `localStorage`, so a browser
 clearing site data for the origin wiped them with nothing wrong in the app.
 
-There is now a SQLite database (`node:sqlite` — a Node built-in, so no native
-module to compile) behind two endpoints:
+They are now stored in PostgreSQL 18, run from `docker-compose.yml`:
+
+```bash
+docker compose up -d          # start (host port 5434)
+docker compose down           # stop; data survives in the named volume
+docker compose down -v        # stop and destroy the data
+```
 
 ```
 GET|PUT /api/shelf    favourites + recently played
@@ -63,9 +68,17 @@ GET|PUT /api/saves    Ruffle SharedObject payloads, keyed as Ruffle keys them
 
 A device is identified by an opaque random UUID in an **httpOnly** cookie — no
 accounts, no email, nothing about a person, and unreadable from page scripts.
-`shelf_entries` and `game_saves` are keyed by `(device_id, …)` with a covering
-index for the one query each read performs, and writes run in a single
-transaction so a crash can't leave a half-erased shelf.
+`shelf_entries` and `game_saves` carry a `UUID` foreign key to `devices` with
+`ON DELETE CASCADE`, a composite primary key, and a `(device_id, kind, position
+DESC)` index matching the one query each read runs. Ordering uses an explicit
+`position` column rather than `updated_at`, which would conflate *when a row was
+written* with *where the user put it*. Writes are single-transaction multi-row
+upserts, so a crash cannot leave a half-erased shelf.
+
+**The database is an enhancement, not a hard dependency.** If Postgres is
+unreachable the routes return 503 and the app runs on `localStorage` exactly as
+before — someone who just wants to play a game is never blocked because Docker
+happens to be stopped.
 
 `localStorage` remains the fast path the UI renders from; `lib/useCloudSync.ts`
 mirrors it. Sync is deliberately **additive**: it never deletes server state the
@@ -75,10 +88,20 @@ wrongly-kept entry is an annoyance, a wrongly-deleted save is lost progress.
 Restoring saves only fills gaps, never overwriting a key the browser already
 holds, so newer local progress is never replaced by an older upload.
 
-**Limit worth knowing:** this survives `localStorage` being cleared, which is the
-common case. A full "clear cookies and site data" also removes the device cookie,
-and the shelf is then unreachable — recovering from that needs real accounts,
-which is a deliberate scope decision, not an oversight.
+Two version-specific traps worth recording, both of which bite the obvious
+approach:
+
+- **Postgres 18 changed the Docker volume convention.** The mount belongs at
+  `/var/lib/postgresql`, *not* the `/var/lib/postgresql/data` used by 17 and
+  earlier; 18 refuses to start against the old path. Data then lives in a
+  major-version subdirectory so `pg_upgrade --link` works.
+- Host port is **5434**, since 5432 is a common local install and 5433 was
+  already taken by another project's database.
+
+**Limit worth knowing:** this survives `localStorage` being cleared. A full
+"clear cookies and site data" also removes the device cookie, and the shelf is
+then unreachable — recovering from that needs real accounts, which is a
+deliberate scope decision, not an oversight.
 
 ### Saves and keyboard
 
@@ -167,7 +190,7 @@ Both were found by testing against the live emulator rather than by reading docs
 ## Running locally
 
 ```bash
-npm install
+npm install && docker compose up -d
 ```
 
 ```bash
