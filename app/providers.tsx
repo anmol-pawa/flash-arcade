@@ -2,8 +2,13 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { useCloudSync } from "@/lib/useCloudSync";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
+  // Mounted here so every route mirrors the shelf and saves to the database
+  // without each page opting in.
+  useCloudSync();
+
   // Created in state so each browser session gets exactly one client, and it is
   // never shared across requests during SSR.
   const [queryClient] = useState(

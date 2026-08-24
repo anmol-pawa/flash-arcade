@@ -6,16 +6,18 @@ import type { GameSummary } from "@/lib/archive";
 /**
  * Favourites and recently-played, persisted in localStorage.
  *
- * There is no account system by design — the arcade is a static front-end over
- * the Internet Archive, so a user's shelf lives entirely on their device.
+ * There is no account system by design; a device is identified by an anonymous
+ * cookie instead. This module owns only the browser copy, which the UI reads
+ * from — `useCloudSync` mirrors it to the server database, which is what makes
+ * a shelf survive the browser clearing site data.
  *
  * localStorage is an external store, so this is modelled with
  * `useSyncExternalStore` rather than effect-driven state: it gives correct
  * server/client snapshots for free and avoids cascading renders on hydration.
  */
 
-const FAVORITES_KEY = "flash-arcade:favorites";
-const RECENTS_KEY = "flash-arcade:recents";
+export const FAVORITES_KEY = "flash-arcade:favorites";
+export const RECENTS_KEY = "flash-arcade:recents";
 const MAX_RECENTS = 24;
 
 /** Just enough to render a card without re-querying the Archive. */
@@ -29,7 +31,7 @@ export interface ShelfEntry {
  * The native `storage` event only fires in *other* tabs, so writes broadcast
  * this event to keep every hook instance in this tab consistent too.
  */
-const SHELF_EVENT = "flash-arcade:shelf-change";
+export const SHELF_EVENT = "flash-arcade:shelf-change";
 
 /** Stable empty array — a fresh [] each call would loop useSyncExternalStore. */
 const EMPTY: ShelfEntry[] = [];

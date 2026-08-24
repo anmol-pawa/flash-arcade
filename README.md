@@ -48,6 +48,38 @@ archive.org serves item downloads **without `Access-Control-Allow-Origin`**. Ruf
 
 `/api/asset/[identifier]/[...path]` is a catch-all proxy that makes the SWF *and* everything the game loads at runtime (XML level data, MP3 audio, sub-SWFs) same-origin. Ruffle's `base` is pointed at the proxy directory so relative asset loads inside the movie resolve correctly. The route validates the identifier against `^[A-Za-z0-9._-]+$`, rejects path traversal, forwards `Range` headers for seekable media, and caches immutably (Archive items never change once uploaded).
 
+### Persistence: SQLite, not just localStorage
+
+The shelf and in-game progress used to live only in `localStorage`, so a browser
+clearing site data for the origin wiped them with nothing wrong in the app.
+
+There is now a SQLite database (`node:sqlite` — a Node built-in, so no native
+module to compile) behind two endpoints:
+
+```
+GET|PUT /api/shelf    favourites + recently played
+GET|PUT /api/saves    Ruffle SharedObject payloads, keyed as Ruffle keys them
+```
+
+A device is identified by an opaque random UUID in an **httpOnly** cookie — no
+accounts, no email, nothing about a person, and unreadable from page scripts.
+`shelf_entries` and `game_saves` are keyed by `(device_id, …)` with a covering
+index for the one query each read performs, and writes run in a single
+transaction so a crash can't leave a half-erased shelf.
+
+`localStorage` remains the fast path the UI renders from; `lib/useCloudSync.ts`
+mirrors it. Sync is deliberately **additive**: it never deletes server state the
+browser lacks, because "this browser has no copy" and "the user removed it" are
+indistinguishable from the client, and the failure modes are not symmetric — a
+wrongly-kept entry is an annoyance, a wrongly-deleted save is lost progress.
+Restoring saves only fills gaps, never overwriting a key the browser already
+holds, so newer local progress is never replaced by an older upload.
+
+**Limit worth knowing:** this survives `localStorage` being cleared, which is the
+common case. A full "clear cookies and site data" also removes the device cookie,
+and the shelf is then unreachable — recovering from that needs real accounts,
+which is a deliberate scope decision, not an oversight.
+
 ### Saves and keyboard
 
 Flash games stored progress in SharedObjects ("Flash cookies"). Ruffle implements
