@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { coverUrl } from "@/lib/archive";
 import { useFavorites, useRecents, type ShelfEntry } from "@/lib/useShelf";
+import ShelfRecovery from "@/components/ShelfRecovery";
 
 function ShelfRow({
   title,
@@ -86,6 +87,8 @@ export default function FavoritesPage() {
           </button>
         }
       />
+
+      <ShelfRecovery />
     </div>
   );
 }

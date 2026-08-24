@@ -187,6 +187,21 @@ export async function writeShelf(deviceId: string, state: ShelfState): Promise<v
   });
 }
 
+/**
+ * Whether a device row exists. Used before adopting a recovery code, so a typo
+ * fails loudly instead of silently stranding someone on a brand-new empty
+ * identity that looks exactly like their shelf having been wiped.
+ */
+export async function deviceExists(deviceId: string): Promise<boolean> {
+  return withClient(async (client) => {
+    const { rowCount } = await client.query(
+      "SELECT 1 FROM devices WHERE id = $1",
+      [deviceId]
+    );
+    return (rowCount ?? 0) > 0;
+  });
+}
+
 export async function readSaves(deviceId: string): Promise<Record<string, string>> {
   return withClient(async (client) => {
     const { rows } = await client.query<{ save_key: string; payload: string }>(

@@ -98,10 +98,23 @@ approach:
 - Host port is **5434**, since 5432 is a common local install and 5433 was
   already taken by another project's database.
 
-**Limit worth knowing:** this survives `localStorage` being cleared. A full
-"clear cookies and site data" also removes the device cookie, and the shelf is
-then unreachable — recovering from that needs real accounts, which is a
-deliberate scope decision, not an oversight.
+#### Recovery codes
+
+Clearing `localStorage` is survivable, but a full "clear cookies and site data"
+also takes the device cookie — leaving the rows in Postgres with nothing
+pointing at them. **My shelf → Move or recover this shelf** surfaces the device
+id as a code: keep it and that unrecoverable loss becomes a paste, and the same
+shelf opens on another browser or machine.
+
+`POST /api/device` rejects anything that isn't a UUID (400) and any UUID with no
+matching row (404), so a typo fails loudly instead of silently stranding someone
+on a fresh empty identity that looks exactly like a wiped shelf.
+
+The tradeoff, stated plainly: anyone holding a code gets that shelf, and exposing
+an `httpOnly` value does undercut the point of the flag. It is acceptable *here*
+because the id is a v4 UUID (122 bits — not guessable) and what it guards is a
+list of Flash games, with no personal data behind it. Real accounts would still
+be the answer for anything sensitive.
 
 ### Saves and keyboard
 
