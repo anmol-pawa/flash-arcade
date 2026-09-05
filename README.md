@@ -115,23 +115,30 @@ approach:
 
 #### Windows desktop shortcut
 
-`run-arcade.bat` (repo root) is a self-contained launcher: start the Podman
-machine, bring up Postgres via `podman-compose`, poll until healthy, build if
-`.next/BUILD_ID` is missing, then run the server in the foreground and open the
-browser a few seconds later from a small detached helper. It deliberately runs
-the server in the **same window** rather than a separate spawned one — closing
-that window is the one obvious way to stop the arcade, and it avoids relying on
-`start "Title" cmd /k …` actually attaching to a visible desktop, which does not
-behave uniformly across every way Windows can invoke a script.
+`run-arcade.bat` (repo root) is a thin wrapper — it just calls
+`run-arcade.ps1` via `powershell.exe`'s own absolute path — which does the
+real work: start the Podman machine, bring up Postgres via `podman-compose`,
+poll until healthy, build if `.next/BUILD_ID` is missing, then run the server
+in the foreground and open the browser a few seconds later from a background
+job. It deliberately runs the server in the **same window** rather than a
+separate spawned one — closing that window is the one obvious way to stop the
+arcade.
 
-It resolves `podman-compose` by checking `PATH` first, then falling back to its
-known `pip install --user` location — `[Environment]::SetEnvironmentVariable`
-writes a `PATH` change to the registry, but an already-running process (or,
-crucially, an already-running `explorer.exe`) does not re-read it until that
-process restarts, so a shortcut relying on bare `podman-compose` could fail the
-first time it's run after installing it.
+It's a `.ps1` rather than pure batch because a `.lnk` double-click spawns its
+process as a child of `explorer.exe`, inheriting whatever `PATH`
+`explorer.exe` cached since it was last started — which can predate
+installing Podman, podman-compose, or Node. Two successive batch-level PATH
+fixes still weren't reliable, because `podman-compose` and the npm/npx shims
+each do their own bare-name subprocess lookups internally (`podman-compose`
+shells out to `podman`; npm/npx shell out to `node`). `run-arcade.ps1`
+resolves every tool by hardcoded absolute path (checked with `Test-Path`
+first) *and* prepends their directories to `$env:Path`, so neither the
+script's own calls nor those tools' internal lookups depend on whatever PATH
+the process happened to inherit. It also runs under `Start-Transcript` to a
+gitignored `run-arcade.log` in the project root, so a future failure is
+readable straight from the log file.
 
-A Desktop shortcut named **Flash Arcade** points at this script. It isn't
+A Desktop shortcut named **Flash Arcade** points at `run-arcade.bat`. It isn't
 tracked in git — a `.lnk` is a Windows-specific, absolute-path artifact with no
 place in a portable repo — so it's created once, directly on the Desktop.
 

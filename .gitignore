@@ -46,3 +46,6 @@ next-env.d.ts
 
 # sqlite store from the pre-postgres implementation
 /data.sqlite-backup
+
+# desktop-shortcut launcher's diagnostic transcript
+/run-arcade.log
