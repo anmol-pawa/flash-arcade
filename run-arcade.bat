@@ -3,6 +3,16 @@ setlocal
 title Flash Arcade
 cd /d "%~dp0"
 
+rem A shortcut double-click spawns cmd.exe as a child of explorer.exe, which
+rem inherits explorer's environment -- captured whenever explorer last
+rem started, potentially long before Podman or podman-compose were
+rem installed and added to PATH. That stale PATH is invisible from an
+rem interactive shell opened just now (which gets a fresh environment), so
+rem it only ever showed up on a real double-click. Prepend both install
+rem locations here, in-process, so every child this script spawns resolves
+rem them regardless of what explorer.exe's own copy of PATH has.
+set "PATH=%ProgramFiles%\RedHat\Podman;%APPDATA%\Python\Python313\Scripts;%PATH%"
+
 echo ================================
 echo   Flash Arcade
 echo ================================
@@ -12,20 +22,8 @@ rem Podman machine start is a no-op if already running; ignore its exit code.
 echo Starting Podman machine (if needed)...
 podman machine start >nul 2>nul
 
-rem Locate podman-compose: prefer PATH (works once the user's environment
-rem has picked up the pip --user install), fall back to the known install
-rem location so this still works immediately, before that PATH change has
-rem propagated to Explorer / this shell. Each branch invokes the command
-rem with quoting appropriate to its own case -- a bare PATH-resolved name
-rem like podman-compose must NOT be quoted, or cmd's PATH/PATHEXT lookup
-rem breaks ("The system cannot find the path specified.").
-where podman-compose >nul 2>nul
 echo Starting Postgres (Podman)...
-if errorlevel 1 (
-  "%APPDATA%\Python\Python313\Scripts\podman-compose.exe" up -d
-) else (
-  podman-compose up -d
-)
+podman-compose up -d
 if errorlevel 1 (
   echo.
   echo Could not start Postgres via podman-compose.
