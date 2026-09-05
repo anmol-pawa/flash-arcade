@@ -15,16 +15,17 @@ podman machine start >nul 2>nul
 rem Locate podman-compose: prefer PATH (works once the user's environment
 rem has picked up the pip --user install), fall back to the known install
 rem location so this still works immediately, before that PATH change has
-rem propagated to Explorer / this shell.
+rem propagated to Explorer / this shell. Each branch invokes the command
+rem with quoting appropriate to its own case -- a bare PATH-resolved name
+rem like podman-compose must NOT be quoted, or cmd's PATH/PATHEXT lookup
+rem breaks ("The system cannot find the path specified.").
 where podman-compose >nul 2>nul
-if errorlevel 1 (
-  set "PODMAN_COMPOSE=%APPDATA%\Python\Python313\Scripts\podman-compose.exe"
-) else (
-  set "PODMAN_COMPOSE=podman-compose"
-)
-
 echo Starting Postgres (Podman)...
-"%PODMAN_COMPOSE%" up -d
+if errorlevel 1 (
+  "%APPDATA%\Python\Python313\Scripts\podman-compose.exe" up -d
+) else (
+  podman-compose up -d
+)
 if errorlevel 1 (
   echo.
   echo Could not start Postgres via podman-compose.
