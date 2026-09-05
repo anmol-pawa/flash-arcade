@@ -1,8 +1,15 @@
 # Local Postgres for the shelf and game-save store.
 #
-#   docker compose up -d      start
-#   docker compose down       stop (data survives, it lives in the volume)
-#   docker compose down -v    stop and destroy the data
+# Run with Podman (rootless, no Docker Desktop license/daemon needed):
+#   podman-compose up -d      start
+#   podman-compose down       stop (data survives, it lives in the volume)
+#   podman-compose down -v    stop and destroy the data
+#
+# `podman compose` (the built-in subcommand, no hyphen) will shell out to
+# Docker Desktop's bundled docker-compose.exe if that's on PATH ahead of the
+# standalone podman-compose -- use the hyphenated `podman-compose` command
+# directly to stay fully off Docker Desktop. `docker compose` also still works
+# against this same file if that's what's installed.
 services:
   postgres:
     image: postgres:18-alpine

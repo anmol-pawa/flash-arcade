@@ -2,7 +2,7 @@
 
 A browser-based player for the Flash games that went dark when Adobe killed Flash Player on 31 December 2020. Search ~6,500 preserved titles and play them instantly — no plugin, no download, no Flash Player.
 
-**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · TanStack Query · PostgreSQL 18 (Docker) · Ruffle (Rust → WebAssembly)
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · TanStack Query · PostgreSQL 18 (Podman) · Ruffle (Rust → WebAssembly)
 
 ---
 
@@ -53,13 +53,22 @@ archive.org serves item downloads **without `Access-Control-Allow-Origin`**. Ruf
 The shelf and in-game progress used to live only in `localStorage`, so a browser
 clearing site data for the origin wiped them with nothing wrong in the app.
 
-They are now stored in PostgreSQL 18, run from `docker-compose.yml`:
+They are now stored in PostgreSQL 18, run from `docker-compose.yml` via
+**Podman** (rootless, no Docker Desktop license or daemon):
 
 ```bash
-docker compose up -d          # start (host port 5434)
-docker compose down           # stop; data survives in the named volume
-docker compose down -v        # stop and destroy the data
+podman-compose up -d          # start (host port 5434)
+podman-compose down           # stop; data survives in the named volume
+podman-compose down -v        # stop and destroy the data
+# or: npm run db:up / npm run db:down
 ```
+
+`podman compose` — the built-in subcommand, no hyphen — shells out to whatever
+"external compose provider" it finds, which on this machine was Docker
+Desktop's own bundled `docker-compose.exe`. That defeats the point of moving
+off Docker Desktop, so everything here uses the hyphenated **`podman-compose`**
+command (a separate `pip install --user podman-compose`), which only ever talks
+to the Podman socket.
 
 ```
 GET|PUT /api/shelf    favourites + recently played
@@ -97,6 +106,34 @@ approach:
   major-version subdirectory so `pg_upgrade --link` works.
 - Host port is **5434**, since 5432 is a common local install and 5433 was
   already taken by another project's database.
+- **Migrating an existing Docker volume does not carry over automatically.**
+  Docker and Podman keep entirely separate storage backends on the same
+  machine, so a Docker-managed named volume is invisible to Podman even though
+  both run through WSL2. Moving requires an actual `pg_dump` from the old
+  container and a restore into the new one — done once here, verified by exact
+  row counts before and after (6 devices / 10 shelf rows / 3 saves, matching).
+
+#### Windows desktop shortcut
+
+`run-arcade.bat` (repo root) is a self-contained launcher: start the Podman
+machine, bring up Postgres via `podman-compose`, poll until healthy, build if
+`.next/BUILD_ID` is missing, then run the server in the foreground and open the
+browser a few seconds later from a small detached helper. It deliberately runs
+the server in the **same window** rather than a separate spawned one — closing
+that window is the one obvious way to stop the arcade, and it avoids relying on
+`start "Title" cmd /k …` actually attaching to a visible desktop, which does not
+behave uniformly across every way Windows can invoke a script.
+
+It resolves `podman-compose` by checking `PATH` first, then falling back to its
+known `pip install --user` location — `[Environment]::SetEnvironmentVariable`
+writes a `PATH` change to the registry, but an already-running process (or,
+crucially, an already-running `explorer.exe`) does not re-read it until that
+process restarts, so a shortcut relying on bare `podman-compose` could fail the
+first time it's run after installing it.
+
+A Desktop shortcut named **Flash Arcade** points at this script. It isn't
+tracked in git — a `.lnk` is a Windows-specific, absolute-path artifact with no
+place in a portable repo — so it's created once, directly on the Desktop.
 
 #### Recovery codes
 
@@ -203,12 +240,18 @@ Both were found by testing against the live emulator rather than by reading docs
 ## Running locally
 
 ```bash
-npm install && docker compose up -d
+npm install
+npm run db:up      # podman-compose up -d — starts Postgres
 ```
 
 ```bash
 npm run dev
 ```
+
+**On Windows,** double-click **`Flash Arcade`** on the Desktop instead: it starts
+Podman, brings up Postgres, builds if there's no production build yet, starts the
+server, and opens the browser. Close that window to stop the server. The
+shortcut and `run-arcade.bat` are described further down.
 
 Then open http://localhost:3000.
 
