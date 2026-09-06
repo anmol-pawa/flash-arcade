@@ -30,14 +30,24 @@ $podmanCompose = Join-Path $env:APPDATA "Python\Python313\Scripts\podman-compose
 $npmCmd = "C:\Program Files\nodejs\npm.cmd"
 $npxCmd = "C:\Program Files\nodejs\npx.cmd"
 
+# A real desktop-shortcut double-click has, once, seen Test-Path report a
+# file missing that plainly exists (confirmed seconds later from a normal
+# shell) -- most likely OneDrive, antivirus, or disk I/O momentarily holding
+# the file right when the process starts. Retry before treating it as a
+# real failure; only fail if it's still missing after several attempts.
 foreach ($tool in @(
     @{ Path = $podman; Name = "Podman"; Install = "https://podman.io" },
     @{ Path = $podmanCompose; Name = "podman-compose"; Install = "pip install --user podman-compose" },
     @{ Path = $npmCmd; Name = "npm"; Install = "https://nodejs.org" },
     @{ Path = $npxCmd; Name = "npx"; Install = "https://nodejs.org" }
 )) {
-    if (-not (Test-Path $tool.Path)) {
-        Fail "$($tool.Name) not found at $($tool.Path).`nInstall it: $($tool.Install)`nOr update the path in run-arcade.ps1 if it's installed elsewhere."
+    $found = $false
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        if (Test-Path $tool.Path) { $found = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $found) {
+        Fail "$($tool.Name) not found at $($tool.Path) after retrying for 2.5s.`nInstall it: $($tool.Install)`nOr update the path in run-arcade.ps1 if it's installed elsewhere."
     }
 }
 
