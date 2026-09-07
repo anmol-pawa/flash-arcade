@@ -30,25 +30,16 @@ $podmanCompose = Join-Path $env:APPDATA "Python\Python313\Scripts\podman-compose
 $npmCmd = "C:\Program Files\nodejs\npm.cmd"
 $npxCmd = "C:\Program Files\nodejs\npx.cmd"
 
-# A real desktop-shortcut double-click has, once, seen Test-Path report a
-# file missing that plainly exists (confirmed seconds later from a normal
-# shell) -- most likely OneDrive, antivirus, or disk I/O momentarily holding
-# the file right when the process starts. Retry before treating it as a
-# real failure; only fail if it's still missing after several attempts.
-foreach ($tool in @(
-    @{ Path = $podman; Name = "Podman"; Install = "https://podman.io" },
-    @{ Path = $podmanCompose; Name = "podman-compose"; Install = "pip install --user podman-compose" },
-    @{ Path = $npmCmd; Name = "npm"; Install = "https://nodejs.org" },
-    @{ Path = $npxCmd; Name = "npx"; Install = "https://nodejs.org" }
-)) {
-    $found = $false
-    for ($attempt = 0; $attempt -lt 5; $attempt++) {
-        if (Test-Path $tool.Path) { $found = $true; break }
-        Start-Sleep -Milliseconds 500
-    }
-    if (-not $found) {
-        Fail "$($tool.Name) not found at $($tool.Path) after retrying for 2.5s.`nInstall it: $($tool.Install)`nOr update the path in run-arcade.ps1 if it's installed elsewhere."
-    }
+# Test-Path has, twice, reported podman-compose.exe missing on a real
+# desktop-shortcut double-click -- including for the whole 2.5s of a retry
+# loop -- while the file plainly existed seconds later (right size, right
+# timestamp, no OneDrive placeholder markers: not under OneDrive's synced
+# tree at all, no ReparsePoint/Offline attribute, correct ACL). So Test-Path
+# is logged here for diagnosis but no longer trusted as a hard gate --
+# whether each tool actually works is decided below, by trying to run it.
+Write-Host "APPDATA = $env:APPDATA"
+foreach ($tool in @($podman, $podmanCompose, $npmCmd, $npxCmd)) {
+    Write-Host "Test-Path $tool -> $(Test-Path $tool)"
 }
 
 # Every tool above is invoked by absolute path, but several of them do their
@@ -73,9 +64,21 @@ if (-not $machine -or -not $machine.Running) {
 }
 
 Write-Host "Starting Postgres (Podman)..."
-try { & $podmanCompose --podman-path $podman up -d } catch { Write-Host $_ }
-if ($LASTEXITCODE -ne 0) {
-    Fail "Could not start Postgres via podman-compose (exit code $LASTEXITCODE)."
+# Tracked explicitly rather than trusting $LASTEXITCODE alone: if the call
+# below throws before podman-compose ever actually runs (e.g. the absolute
+# path genuinely doesn't resolve in this process), $LASTEXITCODE would still
+# hold whatever the previous command (podman machine list, above) left it
+# at -- which is 0 on success, and would be silently read as "it worked."
+$ok = $true
+try {
+    & $podmanCompose --podman-path $podman up -d
+    if ($LASTEXITCODE -ne 0) { $ok = $false }
+} catch {
+    Write-Host $_
+    $ok = $false
+}
+if (-not $ok) {
+    Fail "Could not start Postgres via podman-compose. See $logPath for the exact error."
 }
 
 Write-Host "Waiting for Postgres to be healthy..."
@@ -107,9 +110,16 @@ try {
 
 if (-not (Test-Path ".next\BUILD_ID")) {
     Write-Host "No production build found -- building now, this can take a minute..."
-    try { & $npmCmd run build } catch { Write-Host $_ }
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Build failed (exit code $LASTEXITCODE)."
+    $ok = $true
+    try {
+        & $npmCmd run build
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    } catch {
+        Write-Host $_
+        $ok = $false
+    }
+    if (-not $ok) {
+        Fail "Build failed. See $logPath for the exact error."
     }
 }
 
