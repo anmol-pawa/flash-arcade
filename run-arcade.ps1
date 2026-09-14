@@ -26,31 +26,28 @@ Write-Host "================================"
 Write-Host ""
 
 $podman = "C:\Program Files\RedHat\Podman\podman.exe"
-$podmanCompose = Join-Path $env:APPDATA "Python\Python313\Scripts\podman-compose.exe"
 $npmCmd = "C:\Program Files\nodejs\npm.cmd"
 $npxCmd = "C:\Program Files\nodejs\npx.cmd"
 
-# Test-Path has, twice, reported podman-compose.exe missing on a real
-# desktop-shortcut double-click -- including for the whole 2.5s of a retry
-# loop -- while the file plainly existed seconds later (right size, right
-# timestamp, no OneDrive placeholder markers: not under OneDrive's synced
-# tree at all, no ReparsePoint/Offline attribute, correct ACL). So Test-Path
-# is logged here for diagnosis but no longer trusted as a hard gate --
-# whether each tool actually works is decided below, by trying to run it.
+# Test-Path has, on a real desktop-shortcut double-click, three times
+# reported one of these tools missing at its correct, existence-verified
+# path -- always podman-compose.exe specifically, never podman.exe/npm/npx,
+# and never reproducible from any interactive test. So Test-Path is logged
+# here for diagnosis but no longer trusted as a hard gate -- whether each
+# tool actually works is decided below, by trying to run it.
 Write-Host "APPDATA = $env:APPDATA"
-foreach ($tool in @($podman, $podmanCompose, $npmCmd, $npxCmd)) {
+foreach ($tool in @($podman, $npmCmd, $npxCmd)) {
     Write-Host "Test-Path $tool -> $(Test-Path $tool)"
 }
 
-# Every tool above is invoked by absolute path, but several of them do their
-# OWN bare-name subprocess lookups internally: podman-compose shells out to
-# "podman", and npm.cmd/npx.cmd shell out to "node" -- both by name, not by
-# path, regardless of how *this* script invokes them. This only ever broke
-# on a real desktop-shortcut double-click, which inherits explorer.exe's own
-# copy of PATH -- cached whenever explorer last started, potentially long
-# before any of these were installed. Fixing PATH here, in this process,
-# covers those internal lookups too, on top of the absolute paths above.
-$env:Path = "$(Split-Path $podman);$(Split-Path $podmanCompose);$(Split-Path $npmCmd);$env:Path"
+# Every tool above is invoked by absolute path, but npm.cmd/npx.cmd do their
+# OWN bare-name subprocess lookup internally -- they shell out to "node" by
+# name, not by path, regardless of how *this* script invokes them. This only
+# ever broke on a real desktop-shortcut double-click, which inherits
+# explorer.exe's own copy of PATH -- cached whenever explorer last started,
+# potentially long before Node was installed. Fixing PATH here, in this
+# process, covers that internal lookup too, on top of the absolute paths.
+$env:Path = "$(Split-Path $podman);$(Split-Path $npmCmd);$env:Path"
 
 # flash-arcade runs on its own dedicated Podman machine, not the shared
 # podman-machine-default that stackcraft's containers live on -- stopping
@@ -60,8 +57,8 @@ $env:Path = "$(Split-Path $podman);$(Split-Path $podmanCompose);$(Split-Path $np
 # or resource busy" -- containers/podman#27831), which breaks the second
 # machine's rootless API socket entirely, no matter how it's started.
 # Rootful mode uses a system-level socket instead, sidestepping that
-# collision. CONTAINER_CONNECTION routes every podman/podman-compose call
-# below to this machine without changing the system default (which stays
+# collision. CONTAINER_CONNECTION routes every podman call below to this
+# machine without changing the system default (which stays
 # podman-machine-default, so stackcraft's own tooling is unaffected).
 $env:CONTAINER_CONNECTION = "flash-arcade-root"
 
@@ -77,21 +74,48 @@ if (-not $machine -or -not $machine.Running) {
 }
 
 Write-Host "Starting Postgres (Podman)..."
-# Tracked explicitly rather than trusting $LASTEXITCODE alone: if the call
-# below throws before podman-compose ever actually runs (e.g. the absolute
-# path genuinely doesn't resolve in this process), $LASTEXITCODE would still
-# hold whatever the previous command (podman machine list, above) left it
-# at -- which is 0 on success, and would be silently read as "it worked."
+# Calls podman directly rather than through podman-compose: podman-compose
+# is what failed on a real double-click, three separate times, always this
+# one file, never reproducible under any interactive test -- Test-Path and
+# the real invocation both failing point to something about how Explorer
+# spawns this process specifically, not a bug fixable from inside the
+# script. podman.exe itself has never once failed to resolve, so this
+# replicates docker-compose.yml's single service by hand instead of
+# depending on the compose tool at all -- one less moving part, and the
+# part that was actually breaking.
 $ok = $true
 try {
-    & $podmanCompose --podman-path $podman up -d
-    if ($LASTEXITCODE -ne 0) { $ok = $false }
+    $existing = (& $podman ps -a --filter "name=^flash-arcade-db$" --format "{{.Names}}") -join ""
+    if ($existing -eq "flash-arcade-db") {
+        $running = (& $podman ps --filter "name=^flash-arcade-db$" --format "{{.Names}}") -join ""
+        if ($running -ne "flash-arcade-db") {
+            & $podman start flash-arcade-db
+            if ($LASTEXITCODE -ne 0) { $ok = $false }
+        }
+    } else {
+        & $podman run -d `
+            --name flash-arcade-db `
+            --restart unless-stopped `
+            -e POSTGRES_USER=arcade `
+            -e POSTGRES_PASSWORD=arcade `
+            -e POSTGRES_DB=arcade `
+            -e "POSTGRES_INITDB_ARGS=--locale=C --encoding=UTF8" `
+            -p 5434:5432 `
+            -v arcade-pgdata:/var/lib/postgresql `
+            --health-cmd "pg_isready -U arcade -d arcade -q" `
+            --health-interval 5s `
+            --health-timeout 5s `
+            --health-retries 10 `
+            --health-start-period 10s `
+            postgres:18-alpine
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    }
 } catch {
     Write-Host $_
     $ok = $false
 }
 if (-not $ok) {
-    Fail "Could not start Postgres via podman-compose. See $logPath for the exact error."
+    Fail "Could not start Postgres via podman. See $logPath for the exact error."
 }
 
 Write-Host "Waiting for Postgres to be healthy..."
@@ -121,8 +145,33 @@ try {
     # Not running yet -- fall through and start it.
 }
 
-if (-not (Test-Path ".next\BUILD_ID")) {
-    Write-Host "No production build found -- building now, this can take a minute..."
+# "No build" alone isn't the right check -- a build that exists but predates
+# the current source is worse, because it fails silently: the app runs, just
+# on stale code, with no error to notice. That already happened once here:
+# an unrelated rewrite of the shelf sync logic shipped, but .next/BUILD_ID
+# from a week earlier was still present, so this script kept serving the
+# old bundle, and the old bundle's behavior looked exactly like a real
+# runtime bug for a while before the stale build was the thing found.
+$buildIdPath = ".next\BUILD_ID"
+$needsBuild = -not (Test-Path $buildIdPath)
+if (-not $needsBuild) {
+    $buildTime = (Get-Item $buildIdPath).LastWriteTimeUtc
+    $newestSource = Get-ChildItem -Path "app", "components", "lib" -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+        Select-Object -ExpandProperty LastWriteTimeUtc |
+        Measure-Object -Maximum |
+        Select-Object -ExpandProperty Maximum
+    foreach ($configFile in @("package.json", "next.config.ts", "tsconfig.json")) {
+        if (Test-Path $configFile) {
+            $configTime = (Get-Item $configFile).LastWriteTimeUtc
+            if (-not $newestSource -or $configTime -gt $newestSource) { $newestSource = $configTime }
+        }
+    }
+    if ($newestSource -and $newestSource -gt $buildTime) { $needsBuild = $true }
+}
+
+if ($needsBuild) {
+    Write-Host "No up-to-date production build found -- building now, this can take a minute..."
     $ok = $true
     try {
         & $npmCmd run build
