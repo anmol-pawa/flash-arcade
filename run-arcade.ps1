@@ -52,15 +52,28 @@ foreach ($tool in @($podman, $podmanCompose, $npmCmd, $npxCmd)) {
 # covers those internal lookups too, on top of the absolute paths above.
 $env:Path = "$(Split-Path $podman);$(Split-Path $podmanCompose);$(Split-Path $npmCmd);$env:Path"
 
+# flash-arcade runs on its own dedicated Podman machine, not the shared
+# podman-machine-default that stackcraft's containers live on -- stopping
+# the shared machine once took all of stackcraft down with it (see
+# CLAUDE.md item 12). The machine must be rootful: two systemd-enabled WSL
+# machines under the same UID (1000) collide on user@1000.service ("Device
+# or resource busy" -- containers/podman#27831), which breaks the second
+# machine's rootless API socket entirely, no matter how it's started.
+# Rootful mode uses a system-level socket instead, sidestepping that
+# collision. CONTAINER_CONNECTION routes every podman/podman-compose call
+# below to this machine without changing the system default (which stays
+# podman-machine-default, so stackcraft's own tooling is unaffected).
+$env:CONTAINER_CONNECTION = "flash-arcade-root"
+
 Write-Host "Starting Podman machine (if needed)..."
 # `machine start` writes to stderr and exits non-zero when the machine is
 # already running (some versions treat that as an error, not a no-op), so
 # this is wrapped rather than left to abort the script -- checking actual
 # machine state afterward is what actually decides success or failure.
-try { & $podman machine start } catch { Write-Host $_ }
-$machine = (& $podman machine list --format json | ConvertFrom-Json) | Where-Object { $_.Name -eq 'podman-machine-default' }
+try { & $podman machine start flash-arcade } catch { Write-Host $_ }
+$machine = (& $podman machine list --format json | ConvertFrom-Json) | Where-Object { $_.Name -eq 'flash-arcade' }
 if (-not $machine -or -not $machine.Running) {
-    Fail "The Podman machine did not start. Run 'podman machine start' in a terminal to see the real error."
+    Fail "The flash-arcade Podman machine did not start. Run 'podman machine start flash-arcade' in a terminal to see the real error."
 }
 
 Write-Host "Starting Postgres (Podman)..."

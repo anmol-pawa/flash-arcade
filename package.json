@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "db:up": "podman-compose up -d",
-    "db:down": "podman-compose down",
-    "db:logs": "podman-compose logs -f"
+    "db:up": "set CONTAINER_CONNECTION=flash-arcade-root&& podman-compose up -d",
+    "db:down": "set CONTAINER_CONNECTION=flash-arcade-root&& podman-compose down",
+    "db:logs": "set CONTAINER_CONNECTION=flash-arcade-root&& podman-compose logs -f"
   },
   "dependencies": {
     "@ruffle-rs/ruffle": "^0.4.1",

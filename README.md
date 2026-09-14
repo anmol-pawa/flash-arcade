@@ -54,14 +54,23 @@ The shelf and in-game progress used to live only in `localStorage`, so a browser
 clearing site data for the origin wiped them with nothing wrong in the app.
 
 They are now stored in PostgreSQL 18, run from `docker-compose.yml` via
-**Podman** (rootless, no Docker Desktop license or daemon):
+**Podman** (rootless, no Docker Desktop license or daemon), on its own
+dedicated `flash-arcade` machine — not shared with any other project:
 
 ```bash
-podman-compose up -d          # start (host port 5434)
-podman-compose down           # stop; data survives in the named volume
-podman-compose down -v        # stop and destroy the data
-# or: npm run db:up / npm run db:down
+npm run db:up      # podman-compose up -d — starts Postgres (host port 5434)
+npm run db:down    # stop; data survives in the named volume
+npm run db:logs    # tail the container's logs
 ```
+
+These set `CONTAINER_CONNECTION=flash-arcade-root` before calling
+`podman-compose`, so they always talk to the dedicated machine, never the
+Podman default. It has to be **rootful**: a second *rootless* Podman machine
+on Windows collides with the first over `user@1000.service` (both get the
+same UID) and its API socket never comes up — a confirmed upstream bug
+([containers/podman#27831](https://github.com/containers/podman/issues/27831)).
+Rootful mode uses a system-level socket instead, side-stepping the
+collision entirely.
 
 `podman compose` — the built-in subcommand, no hyphen — shells out to whatever
 "external compose provider" it finds, which on this machine was Docker
@@ -117,12 +126,12 @@ approach:
 
 `run-arcade.bat` (repo root) is a thin wrapper — it just calls
 `run-arcade.ps1` via `powershell.exe`'s own absolute path — which does the
-real work: start the Podman machine, bring up Postgres via `podman-compose`,
-poll until healthy, build if `.next/BUILD_ID` is missing, then run the server
-in the foreground and open the browser a few seconds later from a background
-job. It deliberately runs the server in the **same window** rather than a
-separate spawned one — closing that window is the one obvious way to stop the
-arcade.
+real work: start the dedicated `flash-arcade` Podman machine, bring up
+Postgres via `podman-compose`, poll until healthy, build if `.next/BUILD_ID`
+is missing, then run the server in the foreground and open the browser a
+few seconds later from a background job. It deliberately runs the server in
+the **same window** rather than a separate spawned one — closing that
+window is the one obvious way to stop the arcade.
 
 It's a `.ps1` rather than pure batch because a `.lnk` double-click spawns its
 process as a child of `explorer.exe`, inheriting whatever `PATH`
@@ -131,12 +140,13 @@ installing Podman, podman-compose, or Node. Two successive batch-level PATH
 fixes still weren't reliable, because `podman-compose` and the npm/npx shims
 each do their own bare-name subprocess lookups internally (`podman-compose`
 shells out to `podman`; npm/npx shell out to `node`). `run-arcade.ps1`
-resolves every tool by hardcoded absolute path (checked with `Test-Path`
-first) *and* prepends their directories to `$env:Path`, so neither the
-script's own calls nor those tools' internal lookups depend on whatever PATH
-the process happened to inherit. It also runs under `Start-Transcript` to a
-gitignored `run-arcade.log` in the project root, so a future failure is
-readable straight from the log file.
+resolves every tool by hardcoded absolute path *and* prepends their
+directories to `$env:Path`, so neither the script's own calls nor those
+tools' internal lookups depend on whatever PATH the process happened to
+inherit; `Test-Path` on each is only logged for diagnosis, not trusted as a
+gate — real success is judged by whether the actual invocation works. It
+also runs under `Start-Transcript` to a gitignored `run-arcade.log` in the
+project root, so a future failure is readable straight from the log file.
 
 A Desktop shortcut named **Flash Arcade** points at `run-arcade.bat`. It isn't
 tracked in git — a `.lnk` is a Windows-specific, absolute-path artifact with no
