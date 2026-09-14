@@ -93,18 +93,31 @@ DESC)` index matching the one query each read runs. Ordering uses an explicit
 written* with *where the user put it*. Writes are single-transaction multi-row
 upserts, so a crash cannot leave a half-erased shelf.
 
-**The database is an enhancement, not a hard dependency.** If Postgres is
-unreachable the routes return 503 and the app runs on `localStorage` exactly as
-before — someone who just wants to play a game is never blocked because Docker
-happens to be stopped.
+**The shelf (favourites/recently-played) is database-only** — `lib/useShelf.ts`
+reads and writes `/api/shelf` directly through TanStack Query, with no
+`localStorage` copy at all. It used to be `localStorage`-first with an
+additive background sync to Postgres, which kept showing an empty shelf: two
+different ports (`next dev` on 3000, the desktop shortcut's `next start` on
+3003) are two different browser origins, so two different cookies, two
+different `localStorage` buckets, two different device identities — not a bug
+so much as the browser correctly refusing to share storage across origins by
+design. `npm run dev` now runs on 3003 too, and the shelf has nothing left to
+desync in the first place. Unreachable Postgres means the shelf shows a clear
+"couldn't load" error rather than falling back to a silently-empty state that
+would look identical to actually having nothing saved.
 
-`localStorage` remains the fast path the UI renders from; `lib/useCloudSync.ts`
-mirrors it. Sync is deliberately **additive**: it never deletes server state the
-browser lacks, because "this browser has no copy" and "the user removed it" are
-indistinguishable from the client, and the failure modes are not symmetric — a
-wrongly-kept entry is an annoyance, a wrongly-deleted save is lost progress.
-Restoring saves only fills gaps, never overwriting a key the browser already
-holds, so newer local progress is never replaced by an older upload.
+**Ruffle saves stay additive**, because that one genuinely needs to be:
+Ruffle itself, not this app, persists SharedObjects to `localStorage`, so
+there is no way to make saves database-only without rewriting Ruffle's own
+storage layer. `lib/useCloudSync.ts` mirrors saves — it never deletes server
+state the browser lacks, because "this browser has no copy" and "the user
+removed it" are indistinguishable from the client, and the failure modes are
+not symmetric: a wrongly-kept entry is an annoyance, a wrongly-deleted save is
+lost progress. Restoring only fills gaps, never overwriting a key the browser
+already holds, so newer local progress is never replaced by an older upload.
+If Postgres is unreachable, saves still work purely through `localStorage`,
+exactly as before — someone who just wants to play a game is never blocked
+because Docker happens to be stopped.
 
 Two version-specific traps worth recording, both of which bite the obvious
 approach:
@@ -127,8 +140,9 @@ approach:
 `run-arcade.bat` (repo root) is a thin wrapper — it just calls
 `run-arcade.ps1` via `powershell.exe`'s own absolute path — which does the
 real work: start the dedicated `flash-arcade` Podman machine, bring up
-Postgres via `podman-compose`, poll until healthy, build if `.next/BUILD_ID`
-is missing, then run the server in the foreground and open the browser a
+Postgres via direct `podman run`/`podman start` calls (not podman-compose —
+see below), poll until healthy, build if there's no build or it predates the
+current source, then run the server in the foreground and open the browser a
 few seconds later from a background job. It deliberately runs the server in
 the **same window** rather than a separate spawned one — closing that
 window is the one obvious way to stop the arcade.
@@ -136,17 +150,23 @@ window is the one obvious way to stop the arcade.
 It's a `.ps1` rather than pure batch because a `.lnk` double-click spawns its
 process as a child of `explorer.exe`, inheriting whatever `PATH`
 `explorer.exe` cached since it was last started — which can predate
-installing Podman, podman-compose, or Node. Two successive batch-level PATH
-fixes still weren't reliable, because `podman-compose` and the npm/npx shims
-each do their own bare-name subprocess lookups internally (`podman-compose`
-shells out to `podman`; npm/npx shell out to `node`). `run-arcade.ps1`
-resolves every tool by hardcoded absolute path *and* prepends their
-directories to `$env:Path`, so neither the script's own calls nor those
-tools' internal lookups depend on whatever PATH the process happened to
-inherit; `Test-Path` on each is only logged for diagnosis, not trusted as a
-gate — real success is judged by whether the actual invocation works. It
-also runs under `Start-Transcript` to a gitignored `run-arcade.log` in the
-project root, so a future failure is readable straight from the log file.
+installing Podman or Node. `run-arcade.ps1` resolves every tool by hardcoded
+absolute path *and* prepends their directories to `$env:Path`, so neither
+the script's own calls nor npm/npx's internal `node` lookup depend on
+whatever PATH the process happened to inherit; `Test-Path` on each is only
+logged for diagnosis, not trusted as a gate — real success is judged by
+whether the actual invocation works. `podman-compose.exe` specifically kept
+failing to resolve on a real double-click (three times, never reproducible
+interactively, root cause never found despite checking Defender, WDAC,
+OneDrive placeholders, and more), so the launcher no longer depends on it at
+all — it replicates `docker-compose.yml`'s one service by calling `podman`
+directly, which has never once failed to resolve. It also runs under
+`Start-Transcript` to a gitignored `run-arcade.log` in the project root, so
+a future failure is readable straight from the log file. The build-staleness
+check compares `.next/BUILD_ID`'s timestamp against the newest file under
+`app/`, `components/`, `lib/`, and the top-level config files — a build
+that merely *exists* isn't enough, since a build that predates the current
+source serves silently and looks exactly like new code misbehaving.
 
 A Desktop shortcut named **Flash Arcade** points at `run-arcade.bat`. It isn't
 tracked in git — a `.lnk` is a Windows-specific, absolute-path artifact with no
@@ -344,7 +364,7 @@ If a game you own isn't in the Archive's collection, **Your files** (`/local`) p
 | Path | Role |
 | --- | --- |
 | `lib/archive.ts` | Internet Archive client — search, metadata, SWF selection, URL builders |
-| `lib/useShelf.ts` | Favourites and recently-played via `useSyncExternalStore` over `localStorage` |
+| `lib/useShelf.ts` | Favourites and recently-played via TanStack Query directly against `/api/shelf` |
 | `app/api/search/route.ts` | Search proxy with input validation and caching |
 | `app/api/asset/[identifier]/[...path]/route.ts` | Same-origin file proxy (see above) |
 | `components/RufflePlayer.tsx` | Emulator lifecycle, panic detection, stage sizing, controls |
@@ -359,8 +379,7 @@ If a game you own isn't in the Archive's collection, **Your files** (`/local`) p
 
 - **Search input is escaped** against Lucene syntax before hitting the Archive, so a user typing `sonic: the "best"` can't break the query or inject clauses into the collection filter. Matching is scoped to title/description/creator rather than the whole document, which keeps results relevant.
 - **Queries filter on `mediatype:software`.** The Archive stores sub-collection entries ("Software Library: Flash Animations") alongside real items, and their download counts run into the millions — without the filter they monopolise the popular sort and lead to pages with nothing playable on them.
-- **`useSyncExternalStore` for the shelf**, not effect-driven state: `localStorage` *is* an external store, so this gives correct server/client snapshots and avoids cascading renders on hydration. Snapshots are memoised against the raw string to stay referentially stable.
-- **No database.** The shelf is device-local by design, which keeps the app statically deployable.
+- **TanStack Query for the shelf**, reading and writing `/api/shelf` directly — no `localStorage` involved, so there's nothing to desync from the database. An earlier version used `useSyncExternalStore` over `localStorage`, mirrored to Postgres asynchronously; that additive-sync design is what kept producing an empty shelf (see the "Persistence" section above and `CLAUDE.md` item 18/20/21 for the full history).
 - **The player is keyed by game identifier**, so navigating between games remounts cleanly rather than resetting state by hand.
 
 ## Credits & licence

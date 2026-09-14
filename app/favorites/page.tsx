@@ -58,12 +58,24 @@ function ShelfRow({
 }
 
 export default function FavoritesPage() {
-  const { favorites, hydrated } = useFavorites();
-  const { recents, clearRecents } = useRecents();
+  const { favorites, hydrated, isError: favoritesErrored } = useFavorites();
+  const { recents, clearRecents, isError: recentsErrored } = useRecents();
 
-  // Avoid rendering "empty shelf" copy before localStorage has been read.
+  // Avoid rendering "empty shelf" copy before the server has answered.
   if (!hydrated) {
     return <p className="text-sm text-zinc-500">Loading your shelf…</p>;
+  }
+
+  // The shelf lives in the database now, with no local fallback — a failed
+  // fetch must look different from "you have nothing saved," or a database
+  // outage would look exactly like data loss.
+  if (favoritesErrored || recentsErrored) {
+    return (
+      <p className="rounded-lg border border-red-900/50 bg-red-950/20 p-8 text-center text-sm text-red-300">
+        Couldn&apos;t load your shelf. Your favourites and recently played
+        games are still saved — try reloading the page.
+      </p>
+    );
   }
 
   return (
