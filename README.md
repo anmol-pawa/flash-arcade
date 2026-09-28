@@ -351,3 +351,9 @@ If a game you own isn't in the Archive's collection, **Your files** (`/local`) p
 Games are served from the Internet Archive's [Flash software library](https://archive.org/details/softwarelibrary_flash_games) and each links back to its original item page. Rights holders wanting an item removed should contact the Archive, which maintains the collection.
 
 Emulation by [Ruffle](https://ruffle.rs) (MIT / Apache-2.0). This project is MIT licensed — see [LICENSE](LICENSE).
+
+---
+
+## Also in this repository: Query Clash
+
+[`sql-battle/`](sql-battle/) is a separate app: a 1v1 battle game that teaches SQL in PostgreSQL and Oracle, with real Postgres (PGlite) running in the browser. It has its own `package.json`, tests and CI workflow; see [sql-battle/README.md](sql-battle/README.md).

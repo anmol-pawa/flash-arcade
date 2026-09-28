@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Vendored Ruffle emulator build — third-party, minified, not ours to lint.
     "public/ruffle/**",
+    // Query Clash is a separate app with its own lint config.
+    "sql-battle/**",
   ]),
 ]);
 
