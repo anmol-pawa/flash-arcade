@@ -9,6 +9,7 @@ import { tags as t } from "@lezer/highlight";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { TABLES } from "@/content/schema";
 import type { Dialect } from "@/lib/dialect/lint";
+import { isTouch } from "@/lib/touch";
 
 export interface SqlEditorHandle {
   insert(template: string): void;
@@ -120,14 +121,16 @@ export const SqlEditor = forwardRef<SqlEditorHandle, { value: string; onChange: 
           // plain text (a column or table name): cursor lands after it
           v.dispatch({ changes: { from, to, insert: template }, selection: { anchor: from + template.length }, scrollIntoView: true });
         }
-        v.focus();
+        // On touch screens keep the keyboard closed: the selection survives
+        // blur, so the next tap inserts in the right place anyway.
+        if (!isTouch()) v.focus();
       },
       setValue(s: string) {
         const v = view.current;
         if (v) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: s } });
       },
       focus() {
-        view.current?.focus();
+        if (!isTouch()) view.current?.focus();
       },
     }));
 

@@ -62,6 +62,39 @@ body {
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 60%, transparent), 0 0 30px -10px var(--accent);
 }
 
+/* ---------------------------------------------------------------- touch */
+
+/* Below lg the battle screen has a fixed CAST bar at the bottom; keep
+   scrolled-to elements (focused fields, scrollIntoView) clear of it. */
+@media (max-width: 1023px) {
+  html {
+    scroll-padding-bottom: 6rem;
+  }
+}
+
+/* No 300ms tap delay or double-tap zoom on controls. */
+button,
+a,
+[role="tab"],
+[role="radio"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (pointer: coarse) {
+  /* iOS Safari zooms into any focused field under 16px; keep text at 16px. */
+  .cm-host .cm-content,
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* hover-only affordances don't exist on touch */
+  .hide-on-touch {
+    display: none !important;
+  }
+}
+
 @keyframes scan {
   from {
     transform: translateY(-100%);

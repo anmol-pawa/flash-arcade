@@ -9,6 +9,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#07050f",
+  // let the fixed CAST bar sit above the iPhone home indicator (safe-area insets)
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

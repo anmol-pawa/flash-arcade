@@ -19,6 +19,8 @@ import { Feedback, ResultPanel, ResultTab } from "./ResultPanel";
 import { SchemaExplorer } from "./SchemaExplorer";
 import { SpellDeck } from "./SpellDeck";
 import { SqlEditor, SqlEditorHandle } from "./SqlEditor";
+import { SymbolBar } from "./SymbolBar";
+import { isTouch } from "@/lib/touch";
 import { StageHandle, StageView } from "./StageView";
 
 export type Mode = "campaign" | "arena" | "versus";
@@ -66,6 +68,8 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
   const [plan, setPlan] = useState<{ text?: string; label?: string }>({});
   const [paused, setPaused] = useState(false);
   const [endReady, setEndReady] = useState(false);
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const stageBox = useRef<HTMLDivElement>(null);
   const stage = useRef<StageHandle>(null);
   const editor = useRef<SqlEditorHandle>(null);
   const busy = useRef(false);
@@ -207,6 +211,12 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
     if (!mission || s.phase !== "round" || busy.current || !sql.trim()) {
       if (!sql.trim()) sfx.error();
       return;
+    }
+    // On phones: close the keyboard and bring the arena into view for the fight.
+    if (isTouch() || window.innerWidth < 1024) {
+      (document.activeElement as HTMLElement | null)?.blur();
+      const box = stageBox.current?.getBoundingClientRect();
+      if (box && (box.top < 0 || box.bottom > window.innerHeight)) stageBox.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     busy.current = true;
     const side = activeSide;
@@ -360,7 +370,7 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
 
   /* ------------------------------------------------------------ render */
   return (
-    <div className="flex min-h-dvh flex-col lg:h-dvh">
+    <div className="flex min-h-dvh flex-col pb-24 lg:h-dvh lg:pb-0">
       {/* top bar */}
       <header className="flex items-center gap-2 border-b sm:gap-3 border-white/5 bg-black/30 px-4 py-2 backdrop-blur">
         <Link href={mode === "campaign" ? "/campaign" : "/"} className="shrink-0 text-sm text-white/50 hover:text-white">
@@ -405,7 +415,7 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
       </div>
 
       {/* stage */}
-      <div className="relative mx-3 h-[38vh] min-h-[230px] overflow-hidden rounded-2xl border border-white/10 lg:h-auto lg:min-h-[260px] lg:flex-[0_0_40vh]">
+      <div ref={stageBox} className="relative mx-3 h-[38vh] min-h-[230px] scroll-mt-2 overflow-hidden rounded-2xl border border-white/10 lg:h-auto lg:min-h-[260px] lg:flex-[0_0_40vh]">
         <StageView key={`${bossId ?? "versus"}-${wave}`} ref={stage} boss={bossId} versus={mode === "versus"} accent={accent} reducedMotion={save.settings.reducedMotion} font={orbitronFamily} onReady={() => setStageReady(true)} />
         <AnimatePresence>
           {banner && (
@@ -469,8 +479,18 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto pr-1 scroll-thin">
-                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.25em] text-white/35">Schema</div>
-                <SchemaExplorer key={mission.id} dialect={dialect} highlight={mission.tables} onInsert={(t) => editor.current?.insert(t)} />
+                {/* collapsible on phones, always open on desktop */}
+                <button
+                  type="button"
+                  onClick={() => setSchemaOpen((o) => !o)}
+                  className="mb-1.5 flex w-full items-center justify-between text-[10px] font-bold uppercase tracking-[0.25em] text-white/35 lg:pointer-events-none"
+                >
+                  Schema
+                  <span className="text-xs lg:hidden">{schemaOpen ? "▾ hide" : "▸ show tables"}</span>
+                </button>
+                <div className={schemaOpen ? "block" : "hidden lg:block"}>
+                  <SchemaExplorer key={mission.id} dialect={dialect} highlight={mission.tables} onInsert={(t) => editor.current?.insert(t)} />
+                </div>
               </div>
             </>
           ) : (
@@ -484,6 +504,7 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
           <div className="relative min-h-[160px] flex-1">
             <SqlEditor ref={editor} value={sql} onChange={setSql} dialect={dialect} onRun={cast} onPreview={preview} readOnly={s.phase === "casting"} />
           </div>
+          <SymbolBar onInsert={(k) => editor.current?.insert(k)} />
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={preview} disabled={phaseLocked || dbStatus !== "ready"} title="Run without attacking (Ctrl/⌘+Shift+Enter)">
               ▷ Preview
@@ -491,8 +512,8 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
             <Button size="sm" onClick={() => setSql("")} disabled={phaseLocked}>
               Clear
             </Button>
-            <span className="ml-auto hidden text-[11px] text-white/35 sm:inline">Ctrl/⌘ + Enter</span>
-            <motion.div animate={s.phase === "round" && sql.trim() ? { scale: [1, 1.04, 1] } : {}} transition={{ repeat: Infinity, duration: 1.6 }}>
+            <span className="hide-on-touch ml-auto hidden text-[11px] text-white/35 sm:inline">Ctrl/⌘ + Enter</span>
+            <motion.div className="ml-auto hidden lg:block" animate={s.phase === "round" && sql.trim() ? { scale: [1, 1.04, 1] } : {}} transition={{ repeat: Infinity, duration: 1.6 }}>
               <Button variant="primary" size="lg" onClick={cast} disabled={phaseLocked || dbStatus !== "ready" || !sql.trim()} className="font-display tracking-[0.2em]">
                 {s.phase === "casting" ? "CASTING…" : "⚡ CAST"}
               </Button>
@@ -518,6 +539,17 @@ export default function BattleScreen({ mode, chapter: chapterNo = 1, versusChapt
             hideTarget={mode === "versus"}
           />
         </section>
+      </div>
+
+      {/* phones/tablets: CAST stays under the thumb while scrolling */}
+      <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-white/10 bg-[#07050f]/95 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
+        <Button size="sm" onClick={preview} disabled={phaseLocked || dbStatus !== "ready" || !sql.trim()}>
+          ▷ Preview
+        </Button>
+        <div className="font-mono text-xs text-white/40 tabular-nums">{s.timeTotal >= 9999 ? "∞" : `${Math.ceil(s.timeLeft)}s`}</div>
+        <Button variant="primary" onClick={cast} disabled={phaseLocked || dbStatus !== "ready" || !sql.trim()} className="ml-auto flex-1 py-3 font-display tracking-[0.2em]">
+          {s.phase === "casting" ? "CASTING…" : "⚡ CAST"}
+        </Button>
       </div>
 
       {/* intro */}
@@ -636,7 +668,7 @@ function IntroCard({ mode, chapter, wave, ready, status, onFight, p2Dialect, set
           {ready ? "FIGHT" : status === "error" ? "ENGINE FAILED" : "LOADING ENGINE…"}
         </Button>
       </div>
-      <p className="mt-3 text-[11px] text-white/35">Tip: click or drag spell cards and schema names into the editor. Ctrl/⌘+Enter casts.</p>
+      <p className="mt-3 text-[11px] text-white/35">Tip: tap (or drag) spell cards and schema names into the editor. On a keyboard, Ctrl/⌘+Enter casts.</p>
     </div>
   );
 }

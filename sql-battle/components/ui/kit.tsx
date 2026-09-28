@@ -202,7 +202,8 @@ export function CodeBlock({ code, label, color }: { code: string; label?: string
           {label}
         </div>
       )}
-      <pre className="overflow-x-auto p-3 font-mono text-[12.5px] leading-relaxed text-white/85 scroll-thin">{code}</pre>
+      {/* wraps on phones so the SQL is readable without sideways scrolling */}
+      <pre className="overflow-x-auto p-3 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-white/85 scroll-thin sm:whitespace-pre">{code}</pre>
     </div>
   );
 }
