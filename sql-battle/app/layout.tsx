@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { PwaRegister } from "@/components/PwaRegister";
 import { inter, jetbrains, orbitron } from "./fonts";
 
 export const metadata: Metadata = {
   title: "Query Clash — SQL battle arena",
   description: "A 1v1 action battle game that teaches SQL from SELECT to recursive CTEs in both Oracle and PostgreSQL. Your queries are your spells.",
+  // iPhone "Add to Home Screen": open full-screen like an app
+  appleWebApp: { capable: true, title: "Query Clash", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
@@ -16,7 +19,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable} ${orbitron.variable} h-full`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        {children}
+        <PwaRegister />
+      </body>
     </html>
   );
 }

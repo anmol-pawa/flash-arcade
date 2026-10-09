@@ -12,8 +12,14 @@ import type { Envelope, Reply, Response } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
 
-/** PGlite is served unbundled from /pglite (see scripts/copy-pglite.mjs). */
-const PGLITE_URL = "/pglite/index.js";
+/**
+ * PGlite is served unbundled from <base>/pglite (see scripts/copy-pglite.mjs).
+ * The base path comes from this worker's own URL (…/<base>/_next/static/…),
+ * so the same build works at the site root or under a sub-path such as
+ * GitHub Pages' /<repo>/.
+ */
+const BASE = self.location.pathname.split("/_next/")[0];
+const PGLITE_URL = `${BASE}/pglite/index.js`;
 
 async function boot(): Promise<PGlite> {
   const mod: typeof import("@electric-sql/pglite") = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ PGLITE_URL);

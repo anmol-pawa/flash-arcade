@@ -12,7 +12,8 @@
     "test": "vitest run",
     "postinstall": "node scripts/copy-pglite.mjs",
     "predev": "node scripts/copy-pglite.mjs",
-    "prebuild": "node scripts/copy-pglite.mjs"
+    "prebuild": "node scripts/copy-pglite.mjs",
+    "build:pages": "node scripts/copy-pglite.mjs && STATIC_EXPORT=1 BASE_PATH=${BASE_PATH-/flash-arcade} next build && BASE_PATH=${BASE_PATH-/flash-arcade} node scripts/gen-sw.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
